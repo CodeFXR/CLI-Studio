@@ -1,6 +1,6 @@
 <p align="center">
   <b style="font-size:40px;">CLI-Studio</b><br>
-  <img width="360" height="360" alt="cli-studio" src="https://github.com/user-attachments/assets/4da0958e-9468-45a0-8383-8e365188b694" />
+  <img width="560" height="560" alt="cli-studio" src="https://github.com/user-attachments/assets/4da0958e-9468-45a0-8383-8e365188b694" />
 </p>
 
 <p align="center">
