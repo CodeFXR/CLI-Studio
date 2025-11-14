@@ -1,8 +1,7 @@
 <p align="center">
   <b style="font-size:40px;">CLI-Studio</b><br>
-  <img width="560" height="560" alt="cli-studio" src="https://github.com/user-attachments/assets/4da0958e-9468-45a0-8383-8e365188b694" />
+  <img width="646" height="507" alt="cli-studio icon" src="https://github.com/user-attachments/assets/aecea44a-aa39-4dec-ade1-1be60b054f7b" />
 </p>
-
 <p align="center">
   CLI-Studio is a terminal user interface for image, video, and audio manipulation.<br>
   It simplifies the use of command-line media tools by providing an intuitive, menu-driven workflow,<br>
