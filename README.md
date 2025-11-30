@@ -1,4 +1,5 @@
 <h1 align="center">CLI ▶ Studio</h1>
+<p align="center">
   <img width="646" height="507" alt="cli-studio icon" src="https://github.com/user-attachments/assets/aecea44a-aa39-4dec-ade1-1be60b054f7b" />
 </p>
 <p align="center">
