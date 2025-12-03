@@ -1,6 +1,6 @@
 <h1 align="center">CLI ▶ Studio</h1>
 <p align="center">
-  <img width="646" height="507" alt="cli-studio icon" src="https://github.com/user-attachments/assets/aecea44a-aa39-4dec-ade1-1be60b054f7b" />
+  <img src="https://github.com/user-attachments/assets/aecea44a-aa39-4dec-ade1-1be60b054f7b" alt="cli-studio icon" width="150" />
 </p>
 <p align="center">
   CLI ▶ Studio is a terminal user interface for image, video, and audio manipulation.<br>
