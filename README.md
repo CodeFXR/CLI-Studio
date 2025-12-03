@@ -7,3 +7,9 @@
   It simplifies the use of command-line media tools by providing an intuitive, menu-driven workflow,<br>
   allowing beginners to access core features without memorizing complex commands.
 </p>
+
+##
+
+<p align="center">
+  &copy; CodeFXR. All rights reserved.
+</p>
