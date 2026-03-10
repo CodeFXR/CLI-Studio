@@ -1,0 +1,4 @@
+textual
+textual-image
+Pillow
+yt-dlp

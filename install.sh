@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+
+# ==========================================
+# CLI-Studio Installation Script
+# Supports: macOS, Ubuntu/Debian, Fedora, Arch
+# ==========================================
+
+set -e
+
+# --- Variables ---
+REPO_URL="https://github.com/codefxr/cli-studio.git" # Update if your GitHub repo differs
+INSTALL_DIR="$HOME/.local/share/cli-studio"
+BIN_DIR="$HOME/.local/bin"
+EXECUTABLE="$BIN_DIR/cli-studio"
+
+# --- Colors & Formatting ---
+CYAN="\033[36m"
+GREEN="\033[32m"
+RED="\033[31m"
+YELLOW="\033[33m"
+BOLD="\033[1m"
+RESET="\033[0m"
+
+# --- ASCII Art ---
+print_banner() {
+    clear
+    echo -e "${CYAN}${BOLD}"
+    echo '     ██████╗ ██╗     ██╗    ███████╗████████╗██╗   ██╗██████╗ ██╗ ██████╗ '
+    echo '    ██╔════╝ ██║     ██║    ██╔════╝╚══██╔══╝██║   ██║██╔══██╗██║██╔══██╗'
+    echo '    ██║      ██║     ██║ ▶  ███████╗   ██║   ██║   ██║██║  ██║██║██║   ██║'
+    echo '    ██║      ██║     ██║    ╚════██║   ██║   ██║   ██║██║  ██║██║██║   ██║'
+    echo '    ╚██████╗ ███████╗██║    ███████║   ██║   ╚██████╔╝██████╔╝██║╚██████╔╝'
+    echo '     ╚═════╝ ╚══════╝╚═╝    ╚═════╝   ╚═╝    ╚═════╝ ╚═════╝ ╚═╝ ╚═════╝ '
+    echo -e "${RESET}\n"
+    echo -e "              ${BOLD}The Ultimate Terminal Media Dashboard${RESET}\n"
+}
+
+# --- Helper: Spinners/Steps ---
+step() {
+    echo -e "${CYAN}▶${RESET} ${BOLD}$1${RESET}..."
+}
+
+success() {
+    echo -e "  ${GREEN}Done:${RESET} $1"
+}
+
+error_exit() {
+    echo -e "  ${RED}ERROR:${RESET} $1"
+    exit 1
+}
+
+# --- 1. System Detection & Dependencies ---
+install_dependencies() {
+    step "Detecting OS and checking dependencies (sudo may be required)"
+    
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        if ! command -v brew &> /dev/null; then
+            error_exit "Homebrew is required on macOS. Install it from https://brew.sh/"
+        fi
+        echo -e "  ${YELLOW}Running: brew install ffmpeg imagemagick exiftool python3 git${RESET}"
+        brew install ffmpeg imagemagick exiftool python3 git
+        
+    elif [[ -f "/etc/os-release" ]]; then
+        # Linux
+        source /etc/os-release
+        case "$ID" in
+            ubuntu|debian|pop)
+                echo -e "  ${YELLOW}Running: apt install ffmpeg imagemagick libimage-exiftool-perl python3-venv git${RESET}"
+                sudo apt-get update -qq
+                sudo apt-get install -y ffmpeg imagemagick libimage-exiftool-perl python3-venv python3-pip git
+                ;;
+            fedora)
+                echo -e "  ${YELLOW}Running: dnf install ffmpeg ImageMagick perl-Image-ExifTool python3 git${RESET}"
+                sudo dnf install -y ffmpeg ImageMagick perl-Image-ExifTool python3 git
+                ;;
+            arch|manjaro|endeavouros)
+                echo -e "  ${YELLOW}Running: pacman -S ffmpeg imagemagick perl-image-exiftool python git${RESET}"
+                sudo pacman -Syu --noconfirm ffmpeg imagemagick perl-image-exiftool python git
+                ;;
+            *)
+                echo -e "  ${YELLOW}Unsupported package manager. Please ensure ffmpeg, imagemagick, exiftool, and python3 are installed manually.${RESET}"
+                ;;
+        esac
+    else
+        echo -e "  ${YELLOW}Unknown OS. Please ensure ffmpeg, imagemagick, exiftool, and python3 are installed manually.${RESET}"
+    fi
+    success "System dependencies satisfied."
+}
+
+# --- 2. Clone Repository ---
+clone_repository() {
+    step "Downloading CLI-Studio"
+    if [ -d "$INSTALL_DIR" ]; then
+        echo -e "  ${YELLOW}Removing old installation at $INSTALL_DIR${RESET}"
+        rm -rf "$INSTALL_DIR"
+    fi
+    
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone -q "$REPO_URL" "$INSTALL_DIR" || error_exit "Failed to clone repository. Is git installed?"
+    success "Repository cloned to $INSTALL_DIR"
+}
+
+# --- 3. Setup Python Virtual Environment ---
+setup_venv() {
+    step "Setting up isolated Python environment"
+    cd "$INSTALL_DIR"
+    python3 -m venv .venv || error_exit "Failed to create virtual environment."
+    
+    source .venv/bin/activate
+    echo -e "  ${YELLOW}Installing Python packages (textual, Pillow, yt-dlp)...${RESET}"
+    pip install --upgrade pip -q
+    pip install -r requirements.txt -q || error_exit "Failed to install Python requirements."
+    success "Virtual environment configured."
+}
+
+# --- 4. Create Executable Wrapper ---
+create_executable() {
+    step "Creating global 'cli-studio' and 'cso' commands"
+    mkdir -p "$BIN_DIR"
+    
+    cat << EOF > "$EXECUTABLE"
+#!/usr/bin/env bash
+# CLI-Studio Launcher
+cd "$INSTALL_DIR" && source .venv/bin/activate && python cli-studio.py "\$@"
+EOF
+
+    chmod +x "$EXECUTABLE"
+    
+    # Create the 'cso' shortcut
+    ln -sf "$EXECUTABLE" "$BIN_DIR/cso"
+    
+    success "Executables created at $BIN_DIR"
+}
+
+# --- 5. Verify PATH ---
+check_path() {
+    step "Verifying terminal environment"
+    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+        echo -e "  ${YELLOW}$BIN_DIR is not in your PATH.${RESET}"
+        
+        # Attempt to auto-add to path
+        SHELL_RC=""
+        if [[ "$SHELL" == *"zsh"* ]]; then SHELL_RC="$HOME/.zshrc"
+        elif [[ "$SHELL" == *"bash"* ]]; then SHELL_RC="$HOME/.bashrc"
+        elif [[ "$SHELL" == *"fish"* ]]; then SHELL_RC="$HOME/.config/fish/config.fish"
+        fi
+        
+        if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
+            if [[ "$SHELL" == *"fish"* ]]; then
+                echo "set -gx PATH \"$BIN_DIR\" \$PATH" >> "$SHELL_RC"
+            else
+                echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$SHELL_RC"
+            fi
+            echo -e "  ${GREEN}Auto-added to $SHELL_RC. You may need to restart your terminal.${RESET}"
+        else
+            echo -e "  ${YELLOW}Please manually add '$BIN_DIR' to your PATH.${RESET}"
+        fi
+    else
+        success "PATH is correctly configured."
+    fi
+}
+
+# --- Main Execution ---
+main() {
+    print_banner
+    install_dependencies
+    clone_repository
+    setup_venv
+    create_executable
+    check_path
+    
+    echo -e "\n${GREEN}${BOLD}CLI-Studio Installation Complete!${RESET}"
+    echo -e "You can now launch the app from anywhere using either command:\n"
+    echo -e "    ${CYAN}${BOLD}cli-studio${RESET}   or   ${CYAN}${BOLD}cso${RESET}\n"
+}
+
+main
