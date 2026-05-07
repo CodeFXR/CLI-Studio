@@ -51,7 +51,7 @@ class DownloadProgressScreen(ModalScreen):
                 self.app.call_from_thread(self.dismiss)
                 return
 
-        cmd = ["yt-dlp", "--newline"]
+        cmd = ["yt-dlp", "--newline", "--cookies-from-browser", "chrome", "--js-runtimes", "node", "--remote-components", "ejs:github"]
         if self.is_audio:
             cmd.extend(["-x", "--audio-format", "mp3"])
         if self.is_playlist:
