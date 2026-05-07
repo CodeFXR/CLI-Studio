@@ -115,7 +115,7 @@ setup_venv() {
     source .venv/bin/activate
     echo -e "  ${YELLOW}Installing Python packages (textual, Pillow, yt-dlp)...${RESET}"
     pip install --upgrade pip -q
-    pip install -r requirements.txt -q || error_exit "Failed to install Python requirements."
+    pip install -U -r requirements.txt -q || error_exit "Failed to install Python requirements."
     success "Virtual environment configured."
 }
 
