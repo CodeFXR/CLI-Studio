@@ -485,3 +485,95 @@ def test_preview_kill_process_escalates_to_sigkill():
         time.sleep(0.05)
 
     assert proc.returncode in (-signal.SIGKILL, -9)
+
+
+def test_ffmpeg_progress_screen_rejects_symlink_output(tmp_path):
+    import os
+    from ui.progress import FfmpegProgressScreen
+
+    real_file = tmp_path / "real.mp4"
+    real_file.write_text("protected content")
+    symlink_file = tmp_path / "symlink.mp4"
+    os.symlink(real_file, symlink_file)
+    input_file = tmp_path / "in.mp4"
+    input_file.write_text("dummy")
+
+    notified = []
+
+    class FakeApp:
+        def notify(self, msg, severity="info", timeout=5):
+            notified.append((msg, severity))
+
+        def call_from_thread(self, fn, *args, **kwargs):
+            fn(*args, **kwargs)
+
+    screen = FfmpegProgressScreen(str(input_file), str(symlink_file), ["-c", "copy"])
+    screen.app = FakeApp()
+    screen.run_ffmpeg()
+
+    assert any("symbolic link" in msg for msg, _ in notified)
+    assert real_file.read_text() == "protected content"
+
+
+def test_generic_cli_progress_screen_rejects_symlink_output(tmp_path):
+    import os
+    from ui.progress import GenericCliProgressScreen
+
+    real_file = tmp_path / "target.txt"
+    real_file.write_text("protected target")
+    symlink_file = tmp_path / "symlink.txt"
+    os.symlink(real_file, symlink_file)
+
+    notified = []
+
+    class FakeApp:
+        def notify(self, msg, severity="info", timeout=5):
+            notified.append((msg, severity))
+
+        def call_from_thread(self, fn, *args, **kwargs):
+            fn(*args, **kwargs)
+
+    screen = GenericCliProgressScreen(
+        ["echo", "hello"], "echo", str(symlink_file), out_file=str(symlink_file)
+    )
+    screen.app = FakeApp()
+    screen.run_cmd()
+
+    assert any("symbolic link" in msg for msg, _ in notified)
+    assert real_file.read_text() == "protected target"
+
+
+def test_kill_process_group_descendants_escalates_to_sigkill():
+    import os
+    import signal
+    import subprocess
+    import sys
+    import textwrap
+    import time
+    from ui.progress import _LoggingModalScreen
+
+    script = textwrap.dedent("""\
+    import signal, sys, time
+    def handler(*a):
+        pass
+    signal.signal(signal.SIGTERM, handler)
+    sys.stderr.write("ready\\n")
+    sys.stderr.flush()
+    time.sleep(60)
+    """)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stderr is not None
+    proc.stderr.readline()
+
+    screen = _LoggingModalScreen()
+    screen._kill_process_group(proc)
+
+    deadline = time.time() + 3
+    while time.time() < deadline and proc.poll() is None:
+        time.sleep(0.05)
+
+    assert proc.returncode in (-signal.SIGKILL, -9)

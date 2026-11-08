@@ -102,10 +102,26 @@ class WhisperProgressScreen(_LoggingModalScreen):
             handle.write(f"{text}\n\n")
 
     def run_whisper(self) -> None:
-        worker = get_current_worker()
+        try:
+            worker = get_current_worker()
+        except Exception:
+            worker = None
         expanded_in = os.path.abspath(os.path.expanduser(self.input_file))
         expanded_out = os.path.abspath(os.path.expanduser(self.output_file))
         temp_path = ""
+
+        if os.path.islink(expanded_out):
+            self.app.call_from_thread(
+                self._notify,
+                f"Output cannot be a symbolic link: {escape(expanded_out)}",
+                "error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
+        if self.cancel_requested or (worker and worker.is_cancelled):
+            self.app.call_from_thread(self.safe_dismiss)
+            return
 
         try:
             if not os.path.exists(expanded_in):
@@ -120,6 +136,9 @@ class WhisperProgressScreen(_LoggingModalScreen):
                 compute_type=self.compute_type,
                 cache_dir=self.cache_dir,
             )
+            if self.cancel_requested or (worker and worker.is_cancelled):
+                self.app.call_from_thread(self.safe_dismiss)
+                return
             language = None if self.language in ("", "auto") else self.language
             segments, info = model.transcribe(
                 expanded_in,
@@ -146,7 +165,7 @@ class WhisperProgressScreen(_LoggingModalScreen):
                 if vtt:
                     handle.write("WEBVTT\n\n")
                 for segment in segments:
-                    if worker.is_cancelled or self.cancel_requested:
+                    if self.cancel_requested or (worker and worker.is_cancelled):
                         break
                     text = str(getattr(segment, "text", "")).strip()
                     if not text:
@@ -166,7 +185,7 @@ class WhisperProgressScreen(_LoggingModalScreen):
                             progress=min(end, duration),
                         )
 
-            if worker.is_cancelled or self.cancel_requested:
+            if self.cancel_requested or (worker and worker.is_cancelled):
                 os.unlink(temp_path)
                 temp_path = ""
                 self.app.call_from_thread(self._notify, "Transcription cancelled", "warning")

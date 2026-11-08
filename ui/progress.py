@@ -56,8 +56,9 @@ class _LoggingModalScreen(ModalScreen[Any]):
     def _kill_process_group(self, proc: subprocess.Popen | None):
         if not proc:
             return
+        pgid = None
         try:
-            if hasattr(os, "killpg"):
+            if hasattr(os, "killpg") and hasattr(os, "getpgid"):
                 pgid = os.getpgid(proc.pid)
                 os.killpg(pgid, signal.SIGTERM)
                 try:
@@ -71,6 +72,11 @@ class _LoggingModalScreen(ModalScreen[Any]):
                 except (subprocess.TimeoutExpired, Exception):
                     proc.kill()
         except (ProcessLookupError, OSError):
+            if pgid is not None and hasattr(os, "killpg"):
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
             try:
                 proc.kill()
             except Exception:
@@ -165,7 +171,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
             is_playlist=self.is_playlist,
         )
 
-        if self._cancelled or worker.is_cancelled:
+        if self._cancelled or (worker and worker.is_cancelled):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
@@ -191,7 +197,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
         if proc and proc.stdout:
             for line in proc.stdout:
                 self.app.call_from_thread(self.write_log, escape(line.strip()))
-                if worker.is_cancelled or self._cancelled:
+                if self._cancelled or (worker and worker.is_cancelled):
                     self._kill_process_group(proc)
                     break
 
@@ -245,10 +251,22 @@ class FfmpegProgressScreen(_LoggingModalScreen):
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_ffmpeg(self):
-        worker = get_current_worker()
+        try:
+            worker = get_current_worker()
+        except Exception:
+            worker = None
         expanded_in = os.path.abspath(os.path.expanduser(self.input_file))
         expanded_out = os.path.abspath(os.path.expanduser(self.output_file))
         overwrite_flag = _ffmpeg_overwrite_flag()
+
+        if os.path.islink(expanded_out):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Output cannot be a symbolic link: {escape(expanded_out)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
 
         if os.path.isdir(expanded_in):
             if os.path.isfile(expanded_out):
@@ -339,7 +357,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
-        if self._cancelled or worker.is_cancelled:
+        if self._cancelled or (worker and worker.is_cancelled):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
@@ -375,7 +393,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
         if proc and proc.stdout:
             for line in proc.stdout:
                 self.app.call_from_thread(self.write_log, escape(line.strip()))
-                if worker.is_cancelled or self._cancelled:
+                if self._cancelled or (worker and worker.is_cancelled):
                     self._kill_process_group(proc)
                     break
 
@@ -426,14 +444,27 @@ class GenericCliProgressScreen(_LoggingModalScreen):
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_cmd(self):
-        worker = get_current_worker()
+        try:
+            worker = get_current_worker()
+        except Exception:
+            worker = None
+
+        if self.out_file and os.path.islink(self.out_file):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Output cannot be a symbolic link: {escape(self.out_file)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
         bar = self.progress_bar
         is_batch = len(self.cmds) > 1
         failures = []
         captured_output = []
 
         for idx, cmd in enumerate(self.cmds):
-            if self._cancelled or worker.is_cancelled:
+            if self._cancelled or (worker and worker.is_cancelled):
                 break
 
             try:
@@ -465,7 +496,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     self.app.call_from_thread(self.write_log, escape(line.strip()))
                     if self.out_file:
                         captured_output.append(line)
-                    if worker.is_cancelled or self._cancelled:
+                    if self._cancelled or (worker and worker.is_cancelled):
                         self._kill_process_group(proc)
                         break
 
@@ -495,7 +526,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     self._log_msg("failed", f"Failed to save {escape(self.out_file)}: {e}"),
                 )
 
-        if self._cancelled or worker.is_cancelled:
+        if self._cancelled or (worker and worker.is_cancelled):
             self.app.call_from_thread(
                 self.app.notify,
                 "Batch Processing Cancelled" if is_batch else "Process Cancelled",
