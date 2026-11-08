@@ -27,7 +27,7 @@ Every user-supplied file path is wrapped in `os.path.abspath(os.path.expanduser(
 
 ### yt-dlp cookie and remote-components flags
 
-`--cookies-from-browser` and `--remote-components` are **off by default** in `~/.cli_studio_config.json`. Both can be enabled from the Settings menu (`/settings` or `Alt+S`). The "Cookies" setting accepts a browser profile name (e.g. `chrome`, `firefox`, `chrome:Default`); `yt-dlp` then reads that browser's cookie database on demand.
+`--cookies-from-browser` and `--remote-components` are **off by default** in `~/.cli-studio/config.json`. Both can be enabled from the Settings menu (`/settings` or `Alt+S`). The "Cookies" setting accepts a browser profile name (e.g. `chrome`, `firefox`, `chrome:Default`); `yt-dlp` then reads that browser's cookie database on demand.
 
 ### Input validators
 
@@ -79,7 +79,7 @@ Any `.py` file in `~/.cli-studio/plugins/` is loaded with the full privileges of
 `README.md` recommends `curl -fsSL https://cso.codefxr.com/install | bash`. This is the **user's stated preference** despite the broader hygiene community's "inspect before you pipe" guidance. The cli-studio source tree at `cli-studio/install` is a bash script that:
 
 - Installs system packages via `apt`, `dnf`, `pacman`, or `brew` (with `sudo`).
-- Clones the repo into `~/.local/share/cli-studio/`.
+- Clones the repo into `~/.cli-studio/`.
 - Sets up an isolated Python virtual environment.
 - Creates `cli-studio` and `cso` symlinks in `~/.local/bin/`.
 - Optionally appends `export PATH=...` to your shell RC file **after** printing the diff and asking for confirmation (as of 2026-07-21).

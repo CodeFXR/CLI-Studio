@@ -12,11 +12,11 @@ CLI-Studio wraps 16 command-line media tools behind one menu-driven Textual TUI:
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANUlEQVR4nO3OQQmAABRAsSeYxKS/kJkED6bwYAVvImwJtszMVu0BAPAXx1rd1fn1BACA164HHDwF+DpPyKwAAAAASUVORK5CYII=)
 **Key Features**
 
-- **74 integrated tools** across video, audio, image, and document manipulation.
+- **62 integrated tools** across video, audio, and image manipulation.
 - **Interactive file picker.** DirectoryTree-based file and folder selection; no typing absolute paths.
 - **Auto-batch processing.** Select a folder instead of a file and cli-studio iterates with a progress bar. Per-file failures are logged and reported; the batch does not abort.
 - **Inline help (`?`).** Every tool has a plain-English description in the registry.
-- **Atomic config writes.** `~/.cli_studio_config.json` is written via `tempfile.mkstemp()` + `os.replace()`. A crash mid-write cannot corrupt it.
+- **Atomic config writes.** `~/.cli-studio/config.json` is written via `tempfile.mkstemp()` + `os.replace()`. A crash mid-write cannot corrupt it.
 - **Plugin slot.** Drop a `PLUGIN_REGISTRY = {"...": lambda: None}` into `~/.cli-studio/plugins/<name>.py`. Built-in commands cannot be overwritten.
 - **No data leaves your machine.** yt-dlp and gallery-dl reach the URLs you give them, and only those. There is no telemetry, no analytics, no sync.
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANklEQVR4nO3OMQ2AABAAsSNBACPq8MH2NpGACyywEZJWQZeZ2aszAAD+4l6rrTq+ngAA8Nr1AL/KBEe6dElaAAAAAElFTkSuQmCC)
@@ -67,7 +67,7 @@ curl -fsSL https://cso.codefxr.com/install | bash
 
 The script:
 1. Installs system packages via your package manager (`apt`, `dnf`, `pacman`, or `brew`).
-2. Clones the repo into `~/.local/share/cli-studio/`.
+2. Clones the repo into `~/.cli-studio/`.
 3. Creates an isolated Python virtual environment.
 4. Installs the Python dependencies (`textual`, `Pillow`, `yt-dlp`, `natsort`, `textual-image`).
 5. Best-effort installs optional Python deps (`ffmpeg-normalize`, `gallery-dl`); warns if those fail.
@@ -162,10 +162,10 @@ CLI-Studio is built on the **Textual** framework, using a component-based, async
 - **Subprocess safety.** Every subprocess call uses list-form `argv` (never `shell=True`). User paths are wrapped in `os.path.abspath(os.path.expanduser(path))` before being passed to any subprocess.
 - **Input validators.** Numeric and structured text inputs (resolution, dimensions, coords, decimal, page ranges, rclone remote names, EXIF tag names, Whisper cache directories) are validated against regex patterns before flowing into argv lists. Invalid input raises `ValueError` and the wizard shows a toast and stays open.
 - **Markup escape.** User-controlled strings flowing into Rich-markup output are wrapped in `rich.markup.escape()`. Output markup can no longer be injected by user input.
-- **Atomic config writes.** `~/.cli_studio_config.json` is written via `tempfile.mkstemp()` + `os.replace()`. Crash mid-write cannot corrupt it.
+- **Atomic config writes.** `~/.cli-studio/config.json` is written via `tempfile.mkstemp()` + `os.replace()`. Crash mid-write cannot corrupt it.
 - **Cookie and remote-components flags are OFF by default.** `yt_dlp_cookies` and `yt_dlp_remote_components` config keys default to empty strings. Enable explicitly in the Settings menu.
 - **Plugin execution is opt-in.** Anything in `~/.cli-studio/plugins/` runs with your user privileges. Built-in commands cannot be overwritten by plugins (collisions silently lose). Syntax errors in plugins are skipped without crashing startup.
-- **151 tests pass.** `ruff check .` and `mypy` are clean. CI matrix: Python 3.10, 3.11, 3.12, 3.13.
+- **142 tests pass.** `ruff check .` and `mypy` are clean. CI matrix: Python 3.10, 3.11, 3.12, 3.13.
 
 See `SECURITY.md` for the full threat model and `dev_docs/ARCHITECTURE.md` for the full architecture.
 ![](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAnEAAAACCAYAAAA3pIp+AAAABmJLR0QA/wD/AP+gvaeTAAAACXBIWXMAAA7EAAAOxAGVKw4bAAAANUlEQVR4nO3OQQmAABRAsSeYxKS/kJkED6bwYAVvImwJtszMVu0BAPAXx1rd1fn1BACA164HHDwF+DpPyKwAAAAASUVORK5CYII=)
@@ -196,7 +196,7 @@ See `SECURITY.md` for the full threat model and `dev_docs/ARCHITECTURE.md` for t
 If you used the **Automatic Install** method, completely remove cli-studio by deleting its environment and aliases:
 
 ```
-rm -rf ~/.local/share/cli-studio
+rm -rf ~/.cli-studio
 rm ~/.local/bin/cli-studio ~/.local/bin/cso
 ```
 

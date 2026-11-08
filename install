@@ -41,7 +41,7 @@ fi
 
 # --- Variables ---
 REPO_URL="https://github.com/codefxr/cli-studio.git" # Update if your GitHub repo differs
-INSTALL_DIR="$HOME/.local/share/cli-studio"
+INSTALL_DIR="$HOME/.cli-studio"
 BIN_DIR="$HOME/.local/bin"
 EXECUTABLE="$BIN_DIR/cli-studio"
 
@@ -131,14 +131,26 @@ install_dependencies() {
 # --- 2. Clone Repository ---
 clone_repository() {
     step "Downloading CLI-Studio"
-    if [ -d "$INSTALL_DIR" ]; then
-        echo -e "  ${YELLOW}Removing old installation at $INSTALL_DIR${RESET}"
-        rm -rf "$INSTALL_DIR"
+    if [ -d "$HOME/.local/share/cli-studio" ]; then
+        echo -e "  ${YELLOW}Removing legacy install at $HOME/.local/share/cli-studio${RESET}"
+        rm -rf "$HOME/.local/share/cli-studio"
     fi
-    
-    mkdir -p "$(dirname "$INSTALL_DIR")"
-    git clone -q "$REPO_URL" "$INSTALL_DIR" || error_exit "Failed to clone repository. Is git installed?"
-    success "Repository cloned to $INSTALL_DIR"
+
+    if [ -d "$INSTALL_DIR/.git" ]; then
+        echo -e "  ${YELLOW}Updating repository in $INSTALL_DIR${RESET}"
+        (cd "$INSTALL_DIR" && git pull -q) || error_exit "Failed to update repository."
+    elif [ -d "$INSTALL_DIR" ]; then
+        # INSTALL_DIR exists (e.g. plugins or config), clone to temp and merge
+        local temp_dir
+        temp_dir="$(mktemp -d)"
+        git clone -q "$REPO_URL" "$temp_dir" || error_exit "Failed to clone repository. Is git installed?"
+        cp -r "$temp_dir"/. "$INSTALL_DIR"/
+        rm -rf "$temp_dir"
+    else
+        mkdir -p "$INSTALL_DIR"
+        git clone -q "$REPO_URL" "$INSTALL_DIR" || error_exit "Failed to clone repository. Is git installed?"
+    fi
+    success "Repository ready at $INSTALL_DIR"
 }
 
 # --- 3. Setup Python Virtual Environment ---
@@ -221,7 +233,12 @@ check_path() {
             echo
             echo -e "  ${YELLOW}About to append the following line to $SHELL_RC:${RESET}"
             echo -e "    ${CYAN}$new_line${RESET}"
-            read -r -p "  Append? [y/N] " response
+            response="N"
+            if [ -t 0 ]; then
+                read -r -p "  Append? [y/N] " response
+            elif [ -e /dev/tty ]; then
+                read -r -p "  Append? [y/N] " response </dev/tty
+            fi
             echo
             if [[ "$response" =~ ^[Yy]$ ]]; then
                 echo "$new_line" >> "$SHELL_RC"

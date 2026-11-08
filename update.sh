@@ -28,7 +28,10 @@ if [ "$PY_MAJOR" -lt 3 ] \
     exit 1
 fi
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/share/cli-studio}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.cli-studio}"
+if [ ! -d "$INSTALL_DIR" ] && [ -d "$HOME/.local/share/cli-studio" ]; then
+    INSTALL_DIR="$HOME/.local/share/cli-studio"
+fi
 VENV_DIR="$INSTALL_DIR/.venv"
 
 CYAN="\033[36m"

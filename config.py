@@ -178,7 +178,9 @@ def get_help(cmd):
     )
 
 
-CONFIG_FILE = os.path.expanduser("~/.cli_studio_config.json")
+_OLD_CONFIG_FILE = os.path.expanduser("~/.cli_studio_config.json")
+_CLI_STUDIO_DIR = os.path.expanduser("~/.cli-studio")
+CONFIG_FILE = os.path.join(_CLI_STUDIO_DIR, "config.json")
 
 DEFAULT_CONFIG = {
     "default_theme": "t-default",
@@ -209,10 +211,11 @@ def coerce_bool(value: object, *, default: bool = False) -> bool:
 
 
 def _load_full_config() -> dict:
-    if not os.path.exists(CONFIG_FILE):
+    target_file = CONFIG_FILE if os.path.exists(CONFIG_FILE) else _OLD_CONFIG_FILE
+    if not os.path.exists(target_file):
         return dict(DEFAULT_CONFIG)
     try:
-        with open(CONFIG_FILE) as f:
+        with open(target_file) as f:
             data = json.load(f)
         if not isinstance(data, dict):
             return dict(DEFAULT_CONFIG)
@@ -222,10 +225,11 @@ def _load_full_config() -> dict:
     except (json.JSONDecodeError, OSError) as e:
         if isinstance(e, json.JSONDecodeError):
             try:
-                corrupt_backup = f"{CONFIG_FILE}.corrupt"
+                corrupt_backup = f"{target_file}.corrupt"
                 if not os.path.exists(corrupt_backup):
                     import shutil
-                    shutil.copy2(CONFIG_FILE, corrupt_backup)
+
+                    shutil.copy2(target_file, corrupt_backup)
             except OSError:
                 pass
         return dict(DEFAULT_CONFIG)
@@ -233,6 +237,7 @@ def _load_full_config() -> dict:
 
 def _save_config(config: dict) -> None:
     dir_name = os.path.dirname(CONFIG_FILE) or "."
+    os.makedirs(dir_name, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".cli_studio_config.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:

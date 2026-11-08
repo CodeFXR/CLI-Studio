@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cli-studio"
-version = "1.0.0"
+version = "1.1.0"
 description = "Terminal media dashboard wrapping ffmpeg, yt-dlp, Pillow, ImageMagick, ExifTool, tesseract, mkvtoolnix, HandBrakeCLI, gallery-dl, ffmpeg-normalize, rclone, zbarimg, chafa, optional faster-whisper, and Real-ESRGAN ncnn behind a single menu-driven TUI."
 readme = "README.md"
 requires-python = ">=3.10"
