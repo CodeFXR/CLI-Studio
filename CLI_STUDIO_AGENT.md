@@ -74,6 +74,10 @@ The following issues identified during the adversarial audits have been fully re
     - Replaced hardcoded `-c:a pcm_s16le` with dynamic container-mapped codecs (`libmp3lame` for `.mp3`, `libvorbis` for `.ogg`, `libopus` for `.opus`, `pcm_s16le` for `.wav`, `aac` for `.m4a`).
 20. **Unchecked Shell Quotation in Installer (`install`)**:
     - Safely escaped `$INSTALL_DIR` in the generated wrapper script to handle directory paths with quotes or spaces.
+21. **Symlink Clobber Protection Across All Progress Screens (`ui/progress.py`, `ui/transcribe.py`)**:
+    - Added `os.path.islink(expanded_out)` checks across FFmpeg, Whisper, Generic CLI, and Pillow progress flows, rejecting symlinks to prevent destination clobbering.
+22. **Process Cancellation Escalation (`ui/progress.py`, `ui/preview.py`)**:
+    - Implemented two-phase termination (`SIGTERM` -> 0.2s wait -> automatic `SIGKILL` escalation via `os.killpg`) to guarantee responsive process cleanup even for stubborn or hanging subprocesses.
 
 ---
 
@@ -81,7 +85,7 @@ The following issues identified during the adversarial audits have been fully re
 
 - **Focus:** Dedicated media manipulation (Video, Audio, Image) and Cloud Storage.
 - **Active Tool Count:** 62 verified CLI tools in `COMMAND_REGISTRY` (down from 74 after eliminating 12 document tools).
-- **Test Suite:** 139 automated unit, integration, and regression tests passing (`pytest`).
+- **Test Suite:** 142 automated unit, integration, and regression tests passing (`pytest`).
 - **Type Safety:** 0 mypy errors across 73 source files (`mypy --explicit-package-bases --check-untyped-defs .`).
 - **Linter Status:** 0 ruff errors across the entire codebase (`ruff check .`).
 - **Design System & CSS:** 100% intact. Zero styling modifications made to `studio_themes.py` or Textual stylesheets.
