@@ -78,6 +78,10 @@ The following issues identified during the adversarial audits have been fully re
     - Added `os.path.islink(expanded_out)` checks across FFmpeg, Whisper, Generic CLI, and Pillow progress flows, rejecting symlinks to prevent destination clobbering.
 22. **Process Cancellation Escalation (`ui/progress.py`, `ui/preview.py`)**:
     - Implemented two-phase termination (`SIGTERM` -> 0.2s wait -> automatic `SIGKILL` escalation via `os.killpg`) to guarantee responsive process cleanup even for stubborn or hanging subprocesses.
+23. **Unified Directory Architecture & Path Consolidation (`install`, `config.py`, `update.sh`)**:
+    - Consolidated application source, virtual environments, preferences (`config.json`), and plugins under a single clean root directory `~/.cli-studio/`.
+    - Added `/dev/tty` redirection fallback in `install` to preserve interactive prompts under piped `curl | bash` execution.
+    - Upgraded and released production version `v1.1.0` on GitHub.
 
 ---
 
@@ -86,6 +90,7 @@ The following issues identified during the adversarial audits have been fully re
 - **Focus:** Dedicated media manipulation (Video, Audio, Image) and Cloud Storage.
 - **Active Tool Count:** 62 verified CLI tools in `COMMAND_REGISTRY` (down from 74 after eliminating 12 document tools).
 - **Test Suite:** 142 automated unit, integration, and regression tests passing (`pytest`).
+- **Release Version:** `v1.1.0` tagged and released on GitHub.
 - **Type Safety:** 0 mypy errors across 73 source files (`mypy --explicit-package-bases --check-untyped-defs .`).
 - **Linter Status:** 0 ruff errors across the entire codebase (`ruff check .`).
 - **Design System & CSS:** 100% intact. Zero styling modifications made to `studio_themes.py` or Textual stylesheets.
