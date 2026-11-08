@@ -10,13 +10,48 @@ fi
 # Supports: macOS, Ubuntu/Debian, Fedora, Arch
 # ==========================================
 
-set -e
+set -euo pipefail
+
+# --- 0. Refuse to run as root ---
+# cli-studio installs system packages via sudo and creates files in $HOME.
+# Running the whole script as root would silently make the install root-owned.
+# System packages can still be installed; the user is just expected to have
+# sudo configured for passwordless operation, or to run the script as a
+# regular user with `sudo` available on PATH for the install_dependencies step.
+if [ "$(id -u)" -eq 0 ]; then
+    echo ":: Refusing to run as root. Run install as the user who will own the install." >&2
+    exit 1
+fi
+
+# --- 1. Locate Python 3.10+ ---
+if ! command -v python3 >/dev/null 2>&1; then
+    echo ":: python3 is required." >&2
+    exit 1
+fi
+
+PYTHON_BIN="$(command -v python3)"
+PY_MAJOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[0])')"
+PY_MINOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[1])')"
+PY_VERSION="$("$PYTHON_BIN" -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
+if [ "$PY_MAJOR" -lt 3 ] \
+    || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+    echo ":: Python 3.10 or later is required (found $PY_VERSION)." >&2
+    exit 1
+fi
 
 # --- Variables ---
 REPO_URL="https://github.com/codefxr/cli-studio.git" # Update if your GitHub repo differs
 INSTALL_DIR="$HOME/.local/share/cli-studio"
 BIN_DIR="$HOME/.local/bin"
 EXECUTABLE="$BIN_DIR/cli-studio"
+
+PYTHON_PACKAGES=(
+    "textual>=0.85,<7.0"
+    "textual-image>=0.10,<2.0"
+    "Pillow>=10.0,<12.0"
+    "yt-dlp>=2024.1.1"
+    "natsort>=8.0,<10.0"
+)
 
 # --- Colors & Formatting ---
 CYAN="\033[36m"
@@ -30,12 +65,12 @@ RESET="\033[0m"
 print_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
-    echo -e ' ██████╗██╗     ██╗              ███████╗████████╗██╗   ██╗██████╗ ██╗ ██████╗'
-    echo -e '██╔════╝██║     ██║              ██╔════╝╚══██╔══╝██║   ██║██╔══██╗██║██╔═══██╗'
-    echo -e '██║     ██║     ██║    █████╗    ███████╗   ██║   ██║   ██║██║  ██║██║██║   ██║'
-    echo -e '██║     ██║     ██║    ╚════╝    ╚════██║   ██║   ██║   ██║██║  ██║██║██║   ██║'
-    echo -e '╚██████╗███████╗██║              ███████║   ██║   ╚██████╔╝██████╔╝██║╚██████╔╝'
-    echo -e ' ╚═════╝╚══════╝╚═╝              ╚══════╝   ╚═╝    ╚═════╝ ╚═════╝ ╚═╝ ╚═════╝ '
+    echo '     ██████╗ ██╗     ██╗    ███████╗████████╗██╗   ██╗██████╗ ██╗ ██████╗ '
+    echo '    ██╔════╝ ██║     ██║    ██╔════╝╚══██╔══╝██║   ██║██╔══██╗██║██╔══██╗'
+    echo '    ██║      ██║     ██║ ▶  ███████╗   ██║   ██║   ██║██║  ██║██║██║   ██║'
+    echo '    ██║      ██║     ██║    ╚════██║   ██║   ██║   ██║██║  ██║██║██║   ██║'
+    echo '    ╚██████╗ ███████╗██║    ███████║   ██║   ╚██████╔╝██████╔╝██║╚██████╔╝'
+    echo '     ╚═════╝ ╚══════╝╚═╝    ╚═════╝   ╚═╝    ╚═════╝ ╚═════╝ ╚═╝ ╚═════╝ '
     echo -e "${RESET}\n"
     echo -e "              ${BOLD}The Ultimate Terminal Media Dashboard${RESET}\n"
 }
@@ -57,39 +92,39 @@ error_exit() {
 # --- 1. System Detection & Dependencies ---
 install_dependencies() {
     step "Detecting OS and checking dependencies (sudo may be required)"
-    
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        if ! command -v brew &> /dev/null; then
-            error_exit "Homebrew is required on macOS. Install it from https://brew.sh/"
+
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS
+            if ! command -v brew &> /dev/null; then
+                error_exit "Homebrew is required on macOS. Install it from https://brew.sh/"
+            fi
+            echo -e "  ${YELLOW}Running: brew install ffmpeg imagemagick exiftool tesseract mkvtoolnix zbar rclone handbrake chafa python3 git${RESET}"
+            brew install ffmpeg imagemagick exiftool tesseract mkvtoolnix zbar rename rclone handbrake chafa python3 git
+
+        elif [[ -f "/etc/os-release" ]]; then
+            # Linux
+            source /etc/os-release
+            case "$ID" in
+                ubuntu|debian|pop)
+                    echo -e "  ${YELLOW}Running: apt install ffmpeg imagemagick libimage-exiftool-perl tesseract-ocr mkvtoolnix zbar-tools rename rclone handbrake-cli chafa python3-venv git${RESET}"
+                    sudo apt-get update -qq
+                    sudo apt-get install -y ffmpeg imagemagick libimage-exiftool-perl tesseract-ocr tesseract-ocr-eng mkvtoolnix zbar-tools rename rclone handbrake-cli chafa python3-venv python3-pip git
+                    ;;
+                fedora)
+                    echo -e "  ${YELLOW}Running: dnf install ffmpeg ImageMagick perl-Image-ExifTool tesseract mkvtoolnix zbar perl-rename rclone HandBrake-cli chafa python3 git${RESET}"
+                    sudo dnf install -y ffmpeg ImageMagick perl-Image-ExifTool tesseract mkvtoolnix zbar perl-File-Rename rclone HandBrake-cli chafa python3 git
+                    ;;
+                arch|manjaro|endeavouros)
+                    echo -e "  ${YELLOW}Running: pacman -S ffmpeg imagemagick perl-image-exiftool tesseract mkvtoolnix zbar perl-rename rclone handbrake-cli chafa python git${RESET}"
+                    sudo pacman -Syu --noconfirm ffmpeg imagemagick perl-image-exiftool tesseract mkvtoolnix zbar perl-rename rclone handbrake-cli chafa python git
+                    ;;
+                *)
+                    echo -e "  ${YELLOW}Unsupported package manager. Please ensure ffmpeg, imagemagick, exiftool, tesseract, mkvtoolnix, zbar, rename, rclone, handbrake-cli, chafa, and python3 are installed manually.${RESET}"
+                    ;;
+            esac
+        else
+            echo -e "  ${YELLOW}Unknown OS. Please ensure ffmpeg, imagemagick, exiftool, tesseract, mkvtoolnix, zbar, rename, rclone, handbrake-cli, chafa, and python3 are installed manually.${RESET}"
         fi
-        echo -e "  ${YELLOW}Running: brew install ffmpeg imagemagick exiftool python3 git${RESET}"
-        brew install ffmpeg imagemagick exiftool python3 git
-        
-    elif [[ -f "/etc/os-release" ]]; then
-        # Linux
-        source /etc/os-release
-        case "$ID" in
-            ubuntu|debian|pop)
-                echo -e "  ${YELLOW}Running: apt install ffmpeg imagemagick libimage-exiftool-perl python3-venv git${RESET}"
-                sudo apt-get update -qq
-                sudo apt-get install -y ffmpeg imagemagick libimage-exiftool-perl python3-venv python3-pip git
-                ;;
-            fedora)
-                echo -e "  ${YELLOW}Running: dnf install ffmpeg ImageMagick perl-Image-ExifTool python3 git${RESET}"
-                sudo dnf install -y ffmpeg ImageMagick perl-Image-ExifTool python3 git
-                ;;
-            arch|manjaro|endeavouros)
-                echo -e "  ${YELLOW}Running: pacman -S ffmpeg imagemagick perl-image-exiftool python git${RESET}"
-                sudo pacman -Syu --noconfirm ffmpeg imagemagick perl-image-exiftool python git
-                ;;
-            *)
-                echo -e "  ${YELLOW}Unsupported package manager. Please ensure ffmpeg, imagemagick, exiftool, and python3 are installed manually.${RESET}"
-                ;;
-        esac
-    else
-        echo -e "  ${YELLOW}Unknown OS. Please ensure ffmpeg, imagemagick, exiftool, and python3 are installed manually.${RESET}"
-    fi
     success "System dependencies satisfied."
 }
 
@@ -115,7 +150,16 @@ setup_venv() {
     source .venv/bin/activate
     echo -e "  ${YELLOW}Installing Python packages (textual, Pillow, yt-dlp)...${RESET}"
     pip install --upgrade pip -q
-    pip install -U -r requirements.txt -q || error_exit "Failed to install Python requirements."
+    pip install --upgrade -q "${PYTHON_PACKAGES[@]}" || error_exit "Failed to install Python packages."
+    echo
+    echo -e "  ${BOLD}Installing optional Python packages (ffmpeg-normalize, gallery-dl)...${RESET}"
+    if pip install --quiet ffmpeg-normalize gallery-dl; then
+        success "Optional Python packages installed."
+    else
+        echo -e "  ${YELLOW}Warning:${RESET} Optional Python packages failed to install."
+        echo -e "  ${YELLOW}         Normalize Audio (2-pass) and Download Gallery will not work.${RESET}"
+        echo -e "  ${YELLOW}         Re-run this installer or: pip install ffmpeg-normalize gallery-dl${RESET}"
+    fi
     success "Virtual environment configured."
 }
 
@@ -131,8 +175,18 @@ if ! infocmp "\$TERM" >/dev/null 2>&1; then
     export TERM=xterm-256color
 fi
 
-# CLI-Studio Launcher
-cd "$INSTALL_DIR" && source .venv/bin/activate && python cli-studio.py "\$@"
+INSTALL_DIR="$INSTALL_DIR"
+
+if [ "\$1" = "update" ]; then
+    if [ -f "\$INSTALL_DIR/update.sh" ]; then
+        exec bash "\$INSTALL_DIR/update.sh"
+    else
+        echo "Error: update.sh not found at \$INSTALL_DIR/update.sh" >&2
+        exit 1
+    fi
+fi
+
+cd "\$INSTALL_DIR" && source .venv/bin/activate && python cli-studio.py "\$@"
 EOF
 
     chmod +x "$EXECUTABLE"
@@ -148,21 +202,31 @@ check_path() {
     step "Verifying terminal environment"
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
         echo -e "  ${YELLOW}$BIN_DIR is not in your PATH.${RESET}"
-        
-        # Attempt to auto-add to path
+
         SHELL_RC=""
         if [[ "$SHELL" == *"zsh"* ]]; then SHELL_RC="$HOME/.zshrc"
         elif [[ "$SHELL" == *"bash"* ]]; then SHELL_RC="$HOME/.bashrc"
         elif [[ "$SHELL" == *"fish"* ]]; then SHELL_RC="$HOME/.config/fish/config.fish"
         fi
-        
+
         if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
             if [[ "$SHELL" == *"fish"* ]]; then
-                echo "set -gx PATH \"$BIN_DIR\" \$PATH" >> "$SHELL_RC"
+                new_line="set -gx PATH \"$BIN_DIR\" \$PATH"
             else
-                echo "export PATH=\"$BIN_DIR:\$PATH\"" >> "$SHELL_RC"
+                new_line="export PATH=\"$BIN_DIR:\$PATH\""
             fi
-            echo -e "  ${GREEN}Auto-added to $SHELL_RC. You may need to restart your terminal.${RESET}"
+            echo
+            echo -e "  ${YELLOW}About to append the following line to $SHELL_RC:${RESET}"
+            echo -e "    ${CYAN}$new_line${RESET}"
+            read -r -p "  Append? [y/N] " response
+            echo
+            if [[ "$response" =~ ^[Yy]$ ]]; then
+                echo "$new_line" >> "$SHELL_RC"
+                echo -e "  ${GREEN}Added. You may need to restart your terminal or run: source $SHELL_RC${RESET}"
+            else
+                echo -e "  ${YELLOW}Skipped. Manually add '$BIN_DIR' to your PATH when ready:${RESET}"
+                echo -e "    ${CYAN}export PATH=\"$BIN_DIR:\$PATH\"${RESET}"
+            fi
         else
             echo -e "  ${YELLOW}Please manually add '$BIN_DIR' to your PATH.${RESET}"
         fi
@@ -183,6 +247,8 @@ main() {
     echo -e "\n${GREEN}${BOLD}CLI-Studio Installation Complete!${RESET}"
     echo -e "You can now launch the app from anywhere using either command:\n"
     echo -e "    ${CYAN}${BOLD}cli-studio${RESET}   or   ${CYAN}${BOLD}cso${RESET}\n"
+    echo -e "To upgrade Python dependencies later, run:\n"
+    echo -e "    ${CYAN}${BOLD}cli-studio update${RESET}\n"
 }
 
 main

@@ -1,368 +1,642 @@
 import os
-import subprocess
 import re
+import signal
+import subprocess
+from typing import cast
+
+import config
+from natsort import natsorted
+from PIL import Image
+from rich.markup import escape
+from studio_themes import log_palette_colors
+from textual.app import ComposeResult
+from textual.containers import Container
 from textual.screen import ModalScreen
 from textual.widgets import Label, ProgressBar
-from textual.containers import Container
-from textual.app import ComposeResult
 from textual.worker import get_current_worker
 
-class DownloadProgressScreen(ModalScreen):
-    BINDINGS = [("escape", "cancel_download", "Cancel")]
+from workflows.backends import PillowBackend, YtDlpBackend, get_backend
+from workflows.utils import unique_path
 
-    def __init__(self, url: str, save_path: str, is_audio: bool = False, is_playlist: bool = False):
-        super().__init__()
-        self.url = url
-        self.save_path = save_path
-        self.is_audio = is_audio
-        self.is_playlist = is_playlist
-        self.process = None
+
+def _ffmpeg_overwrite_flag() -> str:
+    overwrite = config.coerce_bool(
+        config._load_full_config().get("ffmpeg_overwrite"),
+        default=True,
+    )
+    return "-y" if overwrite else "-n"
+
+
+class _LoggingModalScreen:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._dismissed = False
+        self._cancelled = False
+
+    def safe_dismiss(self):
+        if not getattr(self, "_dismissed", False):
+            self._dismissed = True
+            try:
+                self.dismiss()
+            except Exception:
+                pass
+
+    def _kill_process_group(self, proc: subprocess.Popen | None):
+        if not proc:
+            return
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            else:
+                proc.terminate()
+        except (ProcessLookupError, OSError):
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def write_log(self, text):
         try:
             log = self.app.query_one("#terminal-log")
             log.write(text)
-        except: pass
+        except Exception:
+            try:
+                log = self.app.query_one("#terminal-log")
+                log.write(escape(str(text)))
+            except Exception:
+                pass
+
+    def _log_msg(self, kind: str, body: str) -> str:
+        """Build a '[bold COLOR]Kind:[/bold COLOR] body' line in the active theme's palette."""
+        app = getattr(self, "app", None)
+        theme = getattr(app, "active_theme", None)
+        accent, fail = log_palette_colors(theme) if theme else ("#00dadf", "#f7768e")
+        color = accent if kind == "executing" else fail
+        return f"[bold {color}]{kind.title()}:[/bold {color}] {body}"
+
+
+class DownloadProgressScreen(_LoggingModalScreen, ModalScreen):
+    BINDINGS = [("escape", "cancel_download", "Cancel")]
+
+    def __init__(
+        self,
+        url: str,
+        save_path: str,
+        cookies: str = "",
+        remote_components: str = "",
+        is_audio: bool = False,
+        is_playlist: bool = False,
+    ):
+        super().__init__()
+        self.url = url
+        self.save_path = save_path
+        self.cookies = cookies
+        self.remote_components = remote_components
+        self.is_audio = is_audio
+        self.is_playlist = is_playlist
+        self.process = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
             yield Label("Downloading Media...", id="task-label")
             yield ProgressBar(total=100, show_eta=True)
-            yield Label(f"Saving to: {self.save_path}", id="status-label")
+            yield Label(f"Saving to: {escape(self.save_path)}", id="status-label")
 
     def on_mount(self) -> None:
+        self.progress_bar = self.query_one(ProgressBar)
         self.run_worker(self.run_ytdlp, exclusive=True, thread=True)
 
     def action_cancel_download(self):
+        self._cancelled = True
         if self.process:
-            self.process.terminate()
-        self.dismiss()
+            self._kill_process_group(self.process)
+        self.safe_dismiss()
         self.app.notify("Download Cancelled", severity="warning")
 
     def run_ytdlp(self):
         worker = get_current_worker()
-        bar = self.query_one(ProgressBar)
-        
+        bar = self.progress_bar
+
         expanded_path = os.path.abspath(os.path.expanduser(self.save_path))
         if not os.path.exists(expanded_path):
-            try: os.makedirs(expanded_path)
+            try:
+                os.makedirs(expanded_path)
             except OSError:
                 self.app.call_from_thread(self.app.notify, "Invalid Path", severity="error")
-                self.app.call_from_thread(self.dismiss)
+                self.app.call_from_thread(self.safe_dismiss)
                 return
 
-        cmd = ["yt-dlp", "--newline", "--cookies-from-browser", "chrome", "--js-runtimes", "node", "--remote-components", "ejs:github"]
-        if self.is_audio:
-            cmd.extend(["-x", "--audio-format", "mp3"])
-        if self.is_playlist:
-            cmd.extend(["--yes-playlist"])
-        else:
-            cmd.extend(["--no-playlist"])
-            
-        cmd.extend(["-o", f"{expanded_path}/%(title)s.%(ext)s", "--", self.url])
+        if not self.is_playlist and ("list=" in self.url or "playlist?" in self.url):
+            self.app.call_from_thread(
+                self.app.notify,
+                "URL looks like a playlist. Use 'Download Playlist' for full downloads. Downloading first video only.",
+                severity="warning",
+            )
 
-        try:
-            self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-        except FileNotFoundError:
-            self.app.call_from_thread(self.app.notify, "yt-dlp not found. Please install it.", severity="error")
-            self.app.call_from_thread(self.dismiss)
+        backend = cast(YtDlpBackend, get_backend("yt-dlp"))
+        cmd = backend.build_command(
+            self.url,
+            expanded_path,
+            cookies=self.cookies,
+            remote_components=self.remote_components,
+            is_audio=self.is_audio,
+            is_playlist=self.is_playlist,
+        )
+
+        if self._cancelled or worker.is_cancelled:
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
-        percent_re = re.compile(r'(\d{1,3}\.\d)%')
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            self.app.call_from_thread(
+                self.app.notify, "yt-dlp not found. Please install it.", severity="error"
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
+        percent_re = re.compile(r"(\d{1,3}\.\d)%")
 
         for line in self.process.stdout:
-            self.app.call_from_thread(self.write_log, line.strip())
-            if worker.is_cancelled:
-                self.process.terminate()
+            self.app.call_from_thread(self.write_log, escape(line.strip()))
+            if worker.is_cancelled or self._cancelled:
+                self._kill_process_group(self.process)
                 break
-            
+
             match = percent_re.search(line)
             if match:
                 try:
                     p = float(match.group(1))
                     self.app.call_from_thread(bar.update, progress=p)
-                except ValueError: pass
+                except ValueError:
+                    pass
 
         self.process.wait()
         if self.process.returncode == 0:
             self.app.call_from_thread(self.app.notify, "Download Complete!", severity="information")
         elif self.process.returncode != -15:
             self.app.call_from_thread(self.app.notify, "Download Failed.", severity="error")
-            
-        self.app.call_from_thread(self.dismiss)
+
+        self.app.call_from_thread(self.safe_dismiss)
 
 
-class FfmpegProgressScreen(ModalScreen):
+class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
     BINDINGS = [("escape", "cancel_process", "Cancel")]
 
-    def __init__(self, input_file: str, output_file: str, action_args: list, target_ext: str = None):
+    def __init__(
+        self, input_file: str, output_file: str, action_args: list, target_ext: str = None
+    ):
         super().__init__()
         self.input_file = input_file
         self.output_file = output_file
         self.action_args = action_args
         self.target_ext = target_ext
         self.process = None
-        
-    def write_log(self, text):
-        try:
-            log = self.app.query_one("#terminal-log")
-            log.write(text)
-        except: pass
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
             yield Label("Processing Media (FFmpeg)...", id="task-label")
             yield ProgressBar(total=None, show_eta=False)
-            yield Label(f"Output: {self.output_file}", id="status-label")
+            yield Label(f"Output: {escape(self.output_file)}", id="status-label")
 
     def on_mount(self) -> None:
+        self.progress_bar = self.query_one(ProgressBar)
         self.run_worker(self.run_ffmpeg, exclusive=True, thread=True)
 
     def action_cancel_process(self):
+        self._cancelled = True
         if self.process:
-            self.process.terminate()
-        self.dismiss()
+            self._kill_process_group(self.process)
+        self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_ffmpeg(self):
         worker = get_current_worker()
         expanded_in = os.path.abspath(os.path.expanduser(self.input_file))
         expanded_out = os.path.abspath(os.path.expanduser(self.output_file))
-        
-        # BATCH PROCESSING LOGIC
+        overwrite_flag = _ffmpeg_overwrite_flag()
+
         if os.path.isdir(expanded_in):
-            os.makedirs(expanded_out, exist_ok=True)
-            files = [f for f in os.listdir(expanded_in) if os.path.isfile(os.path.join(expanded_in, f))]
-            files = [f for f in files if not f.startswith('.')]
-            
-            bar = self.query_one(ProgressBar)
+            if os.path.isfile(expanded_out):
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Output path '{escape(expanded_out)}' is a file, not a directory.",
+                    severity="error",
+                )
+                self.app.call_from_thread(self.safe_dismiss)
+                return
+            try:
+                os.makedirs(expanded_out, exist_ok=True)
+            except OSError as e:
+                self.app.call_from_thread(
+                    self.app.notify, f"Could not create output directory: {escape(str(e))}", severity="error"
+                )
+                self.app.call_from_thread(self.safe_dismiss)
+                return
+
+            common_media_exts = {
+                ".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v", ".mpg", ".mpeg",
+                ".3gp", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".m4a", ".wma", ".aiff",
+            }
+            all_files = [
+                f for f in os.listdir(expanded_in) if os.path.isfile(os.path.join(expanded_in, f))
+            ]
+            all_files = [f for f in all_files if not f.startswith(".")]
+            media_files = [f for f in all_files if os.path.splitext(f)[1].lower() in common_media_exts]
+            files = media_files if media_files else all_files
+
+            bar = self.progress_bar
             self.app.call_from_thread(bar.update, total=len(files), progress=0)
-            
+
+            failures = []
             for idx, f in enumerate(files):
-                if worker.is_cancelled: break
+                if self._cancelled or worker.is_cancelled:
+                    break
                 in_f = os.path.join(expanded_in, f)
                 ext = self.target_ext if self.target_ext else os.path.splitext(f)[1]
-                if not ext.startswith('.'): ext = '.' + ext
-                out_f = os.path.join(expanded_out, os.path.splitext(f)[0] + ext)
-                
-                cmd = ["ffmpeg", "-y", "-i", in_f] + self.action_args + [out_f]
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                self.app.call_from_thread(bar.update, progress=idx+1)
-                
-            self.app.call_from_thread(self.app.notify, "Batch Processing Complete!", severity="information")
-            self.app.call_from_thread(self.dismiss)
+                if not ext.startswith("."):
+                    ext = "." + ext
+                out_f = unique_path(expanded_out, os.path.splitext(f)[0], ext)
+
+                cmd = ["ffmpeg", overwrite_flag, "-i", in_f] + self.action_args + [out_f]
+                try:
+                    self.process = subprocess.Popen(
+                        cmd,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        start_new_session=True,
+                    )
+                    _, stderr = self.process.communicate()
+                    rc = self.process.returncode
+                except Exception:
+                    rc = 1
+                finally:
+                    self.process = None
+
+                if rc != 0 and rc != -15 and not self._cancelled:
+                    failures.append(f)
+                    self.app.call_from_thread(
+                        self.write_log,
+                        self._log_msg("failed", f"{escape(f)} (exit {rc})"),
+                    )
+                self.app.call_from_thread(bar.update, progress=idx + 1)
+
+            if self._cancelled or worker.is_cancelled:
+                self.app.call_from_thread(
+                    self.app.notify, "Batch Processing Cancelled", severity="warning"
+                )
+            elif failures:
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Batch done. {len(failures)} of {len(files)} failed (see log).",
+                    severity="warning",
+                )
+            else:
+                self.app.call_from_thread(
+                    self.app.notify, "Batch Processing Complete!", severity="information"
+                )
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
-        # SINGLE FILE LOGIC
         if not os.path.exists(expanded_in):
             self.app.call_from_thread(self.app.notify, "Input file not found.", severity="error")
-            self.app.call_from_thread(self.dismiss)
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
+        if self._cancelled or worker.is_cancelled:
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
         out_dir = os.path.dirname(expanded_out)
         if out_dir and not os.path.exists(out_dir):
-            try: os.makedirs(out_dir)
-            except OSError: pass
+            try:
+                os.makedirs(out_dir)
+            except OSError:
+                pass
 
-        cmd = ["ffmpeg", "-y", "-i", expanded_in] + self.action_args + [expanded_out]
-        
+        cmd = ["ffmpeg", overwrite_flag, "-i", expanded_in] + self.action_args + [expanded_out]
+
         try:
-            self.process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            self.app.call_from_thread(self.write_log, f"[bold #00dadf]Executing:[/bold #00dadf] {' '.join(cmd)}")
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                start_new_session=True,
+            )
+            self.app.call_from_thread(
+                self.write_log, self._log_msg("executing", escape(" ".join(cmd)))
+            )
         except FileNotFoundError:
-            self.app.call_from_thread(self.app.notify, "ffmpeg not found. Please install it.", severity="error")
-            self.app.call_from_thread(self.dismiss)
+            self.app.call_from_thread(
+                self.app.notify, "ffmpeg not found. Please install it.", severity="error"
+            )
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
         for line in self.process.stdout:
-            self.app.call_from_thread(self.write_log, line.strip())
-            if worker.is_cancelled:
-                self.process.terminate()
+            self.app.call_from_thread(self.write_log, escape(line.strip()))
+            if worker.is_cancelled or self._cancelled:
+                self._kill_process_group(self.process)
                 break
 
         self.process.wait()
         if self.process.returncode == 0:
-            self.app.call_from_thread(self.app.notify, "Processing Complete!", severity="information")
+            self.app.call_from_thread(
+                self.app.notify, "Processing Complete!", severity="information"
+            )
         elif self.process.returncode != -15:
             self.app.call_from_thread(self.app.notify, "Processing Failed.", severity="error")
-            
-        self.app.call_from_thread(self.dismiss)
+
+        self.app.call_from_thread(self.safe_dismiss)
 
 
-class GenericCliProgressScreen(ModalScreen):
+class GenericCliProgressScreen(_LoggingModalScreen, ModalScreen):
     BINDINGS = [("escape", "cancel_process", "Cancel")]
 
-    def __init__(self, cmd: list, tool_name: str, target: str):
+    def __init__(self, cmds, tool_name: str, target: str, out_file: str | None = None):
         super().__init__()
-        self.cmd = cmd
+        if cmds and isinstance(cmds[0], (str, bytes)):
+            self.cmds = [cmds]
+        else:
+            self.cmds = cmds
         self.tool_name = tool_name
         self.target = target
+        self.out_file = out_file or (
+            target if str(target).lower().endswith(".txt") and not os.path.isdir(str(target)) else None
+        )
         self.process = None
-
-    def write_log(self, text):
-        try:
-            log = self.app.query_one("#terminal-log")
-            log.write(text)
-        except: pass
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
-            yield Label(f"Running CLI Process...", id="task-label")
-            yield ProgressBar(total=None, show_eta=False)
-            yield Label(f"Target: {self.target}", id="status-label")
+            yield Label(f"Running {self.tool_name}...", id="task-label")
+            total = len(self.cmds) if len(self.cmds) > 1 else None
+            yield ProgressBar(total=total, show_eta=False)
+            yield Label(f"Target: {escape(self.target)}", id="status-label")
 
     def on_mount(self) -> None:
+        self.progress_bar = self.query_one(ProgressBar)
         self.run_worker(self.run_cmd, exclusive=True, thread=True)
 
     def action_cancel_process(self):
+        self._cancelled = True
         if self.process:
-            self.process.terminate()
-        self.dismiss()
-        self.app.notify(f"Process Cancelled", severity="warning")
+            self._kill_process_group(self.process)
+        self.safe_dismiss()
+        self.app.notify("Process Cancelled", severity="warning")
 
     def run_cmd(self):
         worker = get_current_worker()
-        try:
-            self.process = subprocess.Popen(self.cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            self.app.call_from_thread(self.write_log, f"[bold #00dadf]Executing:[/bold #00dadf] {' '.join(self.cmd)}")
-        except FileNotFoundError:
-            self.app.call_from_thread(self.app.notify, f"Command '{self.cmd[0]}' not found. Is {self.tool_name} installed?", severity="error")
-            self.app.call_from_thread(self.dismiss)
-            return
+        bar = self.progress_bar
+        is_batch = len(self.cmds) > 1
+        failures = []
+        captured_output = []
 
-        for line in self.process.stdout:
-            self.app.call_from_thread(self.write_log, line.strip())
-            if worker.is_cancelled:
-                self.process.terminate()
+        for idx, cmd in enumerate(self.cmds):
+            if self._cancelled or worker.is_cancelled:
                 break
 
-        self.process.wait()
-        if self.process.returncode == 0:
-            self.app.call_from_thread(self.app.notify, f"Process Complete!", severity="information")
-        elif self.process.returncode != -15:
-            self.app.call_from_thread(self.app.notify, f"Process Failed.", severity="error")
-            
-        self.app.call_from_thread(self.dismiss)
+            try:
+                self.process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    start_new_session=True,
+                )
+            except FileNotFoundError:
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Command '{cmd[0]}' not found. Is {self.tool_name} installed?",
+                    severity="error",
+                )
+                self.app.call_from_thread(self.safe_dismiss)
+                return
+
+            self.app.call_from_thread(
+                self.write_log,
+                self._log_msg("executing", escape(" ".join(cmd))),
+            )
+
+            for line in self.process.stdout:
+                self.app.call_from_thread(self.write_log, escape(line.strip()))
+                if self.out_file:
+                    captured_output.append(line)
+                if worker.is_cancelled or self._cancelled:
+                    self._kill_process_group(self.process)
+                    break
+
+            self.process.wait()
+            if self.process.returncode != 0 and self.process.returncode != -15 and not self._cancelled:
+                failures.append(cmd[-1])
+                self.app.call_from_thread(
+                    self.write_log,
+                    self._log_msg("failed", f"{escape(cmd[-1])} (exit {self.process.returncode})"),
+                )
+            elif self.process.returncode == -15:
+                break
+
+            if is_batch:
+                self.app.call_from_thread(bar.update, progress=idx + 1)
+
+        if self.out_file and captured_output and not self._cancelled:
+            try:
+                out_path = os.path.abspath(os.path.expanduser(self.out_file))
+                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.writelines(captured_output)
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.write_log,
+                    self._log_msg("failed", f"Failed to save {escape(self.out_file)}: {e}"),
+                )
+
+        if self._cancelled or worker.is_cancelled:
+            self.app.call_from_thread(
+                self.app.notify,
+                "Batch Processing Cancelled" if is_batch else "Process Cancelled",
+                severity="warning",
+            )
+        elif is_batch and failures:
+            self.app.call_from_thread(
+                self.app.notify,
+                f"{self.tool_name}: {len(failures)} of {len(self.cmds)} failed (see log).",
+                severity="warning",
+            )
+        elif is_batch:
+            self.app.call_from_thread(
+                self.app.notify, "Batch Processing Complete!", severity="information"
+            )
+        elif not failures:
+            self.app.call_from_thread(self.app.notify, "Process Complete!", severity="information")
+
+        self.app.call_from_thread(self.safe_dismiss)
 
 
-class PillowProgressScreen(ModalScreen):
-    def __init__(self, input_file: str, output_file: str, action: str, dimensions=None, target_ext=None):
+class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
+    def __init__(
+        self, input_file: str, output_file: str, action: str, dimensions=None, target_ext=None
+    ):
         super().__init__()
         self.input_file = input_file
         self.output_file = output_file
         self.action = action
         self.dimensions = dimensions
         self.target_ext = target_ext
-        
+
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
             yield Label("Processing Image (Pillow)...", id="task-label")
             yield ProgressBar(total=None, show_eta=False)
-            yield Label(f"Saving: {self.output_file}", id="status-label")
+            yield Label(f"Saving: {escape(self.output_file)}", id="status-label")
 
     def on_mount(self) -> None:
+        self.progress_bar = self.query_one(ProgressBar)
         self.run_worker(self.run_pillow, exclusive=True, thread=True)
 
     def process_image(self, img):
-        from PIL import Image, ImageOps, ImageDraw
-        if self.action == "resize" and self.dimensions:
-            img = img.resize(self.dimensions, Image.Resampling.LANCZOS)
-        elif self.action == "crop" and self.dimensions:
-            img = img.crop(self.dimensions)
-        elif self.action == "rotate" and self.dimensions is not None:
-            img = img.rotate(-self.dimensions, expand=True)
-        elif self.action == "flip" and self.dimensions:
-            if self.dimensions == 'horizontal': img = ImageOps.mirror(img)
-            elif self.dimensions == 'vertical': img = ImageOps.flip(img)
-        elif self.action == "watermark" and self.dimensions:
-            draw = ImageDraw.Draw(img)
-            draw.text((20, 20), str(self.dimensions), fill="white")
-        elif self.action == "border" and self.dimensions:
-            img = ImageOps.expand(img, border=int(self.dimensions), fill='black')
-        return img
+        backend = cast(PillowBackend, get_backend("pillow"))
+        return backend.process_image(img, self.action, self.dimensions)
 
     def run_pillow(self):
         worker = get_current_worker()
         expanded_in = os.path.expanduser(self.input_file)
         expanded_out = os.path.expanduser(self.output_file)
-        
-        from PIL import Image
-        
-        # PDF EXPORT LOGIC
+
         if self.action == "to_pdf":
             try:
                 if os.path.isdir(expanded_in):
-                    files = sorted([f for f in os.listdir(expanded_in) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))])
-                    if not files: return
+                    files = [
+                        f
+                        for f in os.listdir(expanded_in)
+                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+                    ]
+                    files = natsorted(files)
+                    if not files:
+                        self.app.call_from_thread(
+                            self.app.notify,
+                            f"No images found in {expanded_in}",
+                            severity="warning",
+                        )
+                        self.app.call_from_thread(self.safe_dismiss)
+                        return
                     images = []
-                    for f in files:
-                        img = Image.open(os.path.join(expanded_in, f)).convert("RGB")
-                        images.append(img)
-                    images[0].save(expanded_out, save_all=True, append_images=images[1:])
+                    try:
+                        for f in files:
+                            with Image.open(os.path.join(expanded_in, f)) as opened_img:
+                                images.append(opened_img.convert("RGB"))
+                        images[0].save(expanded_out, save_all=True, append_images=images[1:])
+                    finally:
+                        for img in images:
+                            try:
+                                img.close()
+                            except Exception:
+                                pass
                 else:
                     with Image.open(expanded_in) as img:
                         img.convert("RGB").save(expanded_out)
                 self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
             except Exception as e:
-                self.app.call_from_thread(self.app.notify, f"Error: {e}", severity="error")
-            self.app.call_from_thread(self.dismiss)
+                self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
-        # BATCH LOGIC
         if os.path.isdir(expanded_in):
             os.makedirs(expanded_out, exist_ok=True)
-            files = [f for f in os.listdir(expanded_in) if os.path.isfile(os.path.join(expanded_in, f))]
-            files = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif'))]
-            
-            bar = self.query_one(ProgressBar)
+            files = [
+                f for f in os.listdir(expanded_in) if os.path.isfile(os.path.join(expanded_in, f))
+            ]
+            files = [
+                f
+                for f in files
+                if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"))
+            ]
+
+            bar = self.progress_bar
             self.app.call_from_thread(bar.update, total=len(files), progress=0)
-            
+
+            failures = []
             for idx, f in enumerate(files):
-                if worker.is_cancelled: break
+                if self._cancelled or worker.is_cancelled:
+                    break
                 in_f = os.path.join(expanded_in, f)
                 ext = self.target_ext if self.target_ext else os.path.splitext(f)[1]
-                if not ext.startswith('.'): ext = '.' + ext
-                out_f = os.path.join(expanded_out, os.path.splitext(f)[0] + ext)
-                
+                if not ext.startswith("."):
+                    ext = "." + ext
+                out_f = unique_path(expanded_out, os.path.splitext(f)[0], ext)
+
                 try:
                     with Image.open(in_f) as img:
                         img = self.process_image(img)
-                        if out_f.lower().endswith(('.jpg', '.jpeg')) and img.mode in ("RGBA", "P"):
+                        if out_f.lower().endswith((".jpg", ".jpeg")) and img.mode in ("RGBA", "P"):
                             img = img.convert("RGB")
                         if self.action == "compress":
                             img.save(out_f, optimize=True, quality=int(self.dimensions))
                         else:
                             img.save(out_f)
-                except Exception: pass
-                self.app.call_from_thread(bar.update, progress=idx+1)
-                
-            self.app.call_from_thread(self.app.notify, "Batch Processing Complete!", severity="information")
-            self.app.call_from_thread(self.dismiss)
+                except Exception as e:
+                    failures.append(f)
+                    self.app.call_from_thread(
+                        self.write_log,
+                        self._log_msg("failed", f"{escape(f)} ({e})"),
+                    )
+                self.app.call_from_thread(bar.update, progress=idx + 1)
+
+            if self._cancelled or worker.is_cancelled:
+                self.app.call_from_thread(
+                    self.app.notify, "Batch Processing Cancelled", severity="warning"
+                )
+            elif failures:
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Batch done. {len(failures)} of {len(files)} failed (see log).",
+                    severity="warning",
+                )
+            else:
+                self.app.call_from_thread(
+                    self.app.notify, "Batch Processing Complete!", severity="information"
+                )
+            self.app.call_from_thread(self.safe_dismiss)
             return
 
-        # SINGLE FILE LOGIC
         if not os.path.exists(expanded_in):
             self.app.call_from_thread(self.app.notify, "Input image not found.", severity="error")
-            self.app.call_from_thread(self.dismiss)
+            self.app.call_from_thread(self.safe_dismiss)
             return
-        
+
         out_dir = os.path.dirname(expanded_out)
         if out_dir and not os.path.exists(out_dir):
-            try: os.makedirs(out_dir)
-            except OSError: pass
+            try:
+                os.makedirs(out_dir)
+            except OSError:
+                pass
 
         try:
             with Image.open(expanded_in) as img:
                 img = self.process_image(img)
-                if expanded_out.lower().endswith(('.jpg', '.jpeg')) and img.mode in ("RGBA", "P"):
+                if expanded_out.lower().endswith((".jpg", ".jpeg")) and img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
-                
+
                 if self.action == "compress":
                     img.save(expanded_out, optimize=True, quality=int(self.dimensions))
                 else:
                     img.save(expanded_out)
-            self.app.call_from_thread(self.app.notify, "Image Processing Complete!", severity="information")
+            self.app.call_from_thread(
+                self.app.notify, "Image Processing Complete!", severity="information"
+            )
         except Exception as e:
-            self.app.call_from_thread(self.app.notify, f"Error: {e}", severity="error")
+            self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
 
-        self.app.call_from_thread(self.dismiss)
+        self.app.call_from_thread(self.safe_dismiss)
+
+        self.app.call_from_thread(self.safe_dismiss)

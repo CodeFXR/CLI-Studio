@@ -85,13 +85,17 @@ ModalScreen {
 }
 
 /* The Box */
-#confirm-dialog, #input-dialog, #progress-dialog { 
+#confirm-dialog, #input-dialog, #progress-dialog, #preview-dialog { 
     width: 60; 
     height: auto; 
     layout: vertical; 
     align: center middle; 
     padding: 1 2; 
 }
+#preview-dialog { width: 82; }
+#preview-title { width: 100%; height: 1; content-align: center middle; text-style: bold; margin-bottom: 1; }
+#preview-content { width: 100%; height: 20; content-align: left top; overflow: hidden; }
+#preview-help { width: 100%; height: 2; content-align: center middle; margin-top: 1; }
 
 /* Transparent Inputs inside Modals */
 #input-dialog Input {
@@ -124,144 +128,158 @@ Toast {
 }
 """
 
-THEME_ORDER = ["t-default", "t-modern", "t-too-modern", "t-coppice", "t-hunter", "t-accident", "t-bleu-gris", "t-pink"]
-THEME_NAMES = {"t-default": "original", "t-modern": "modern", "t-too-modern": "too modern", "t-coppice": "coppice", "t-hunter": "hunter", "t-accident": "navy", "t-bleu-gris": "gris", "t-pink": "pink"}
+THEME_ORDER = [
+    "t-default",
+    "t-modern",
+    "t-too-modern",
+    "t-coppice",
+    "t-hunter",
+    "t-accident",
+    "t-bleu-gris",
+    "t-pink",
+]
+THEME_NAMES = {
+    "t-default": "original",
+    "t-modern": "modern",
+    "t-too-modern": "too modern",
+    "t-coppice": "coppice",
+    "t-hunter": "hunter",
+    "t-accident": "navy",
+    "t-bleu-gris": "gris",
+    "t-pink": "pink",
+}
 NAME_TO_CLASS = {v.lower(): k for k, v in THEME_NAMES.items()}
 
-THEMES_CSS = """
-/* ---------- Original (Green) ---------- */
-Screen.t-default { background: #1e1e2e; }
-ModalScreen.t-default { background: rgba(0,0,0, 0.5); border: none; }
-.t-default #confirm-dialog, .t-default #input-dialog, .t-default #progress-dialog { background: #24283b; border: none; }
-.t-default #logo { color: #00a9ae; }
-.t-default #version { color: #565f89; }
-.t-default #help-text, .t-default #output-text, .t-default #input-label, .t-default #task-label, .t-default #status-label { color: #c0caf5; }
-.t-default #input-container, .t-default #themes-panel, .t-default #menu-panel, .t-default #about-panel { background: #24283b; border: tall #414868; }
-.t-default #themes-nav, .t-default #themes-title, .t-default #menu-nav, .t-default #menu-title, .t-default #about-title, .t-default #about-text, .t-default #about-nav { color: #c0caf5; }
-.t-default #prompt, .t-default .confirm-option.selected { color: #00dadf; }
-.t-default #input-label, .t-default #confirm-question, .t-default .confirm-option, .t-default #confirm-help { color: #c0caf5; }
-.t-default #input-dialog Input { border: tall #565f89; }
-.t-default #input-dialog Input:focus { border: tall #00dadf; }
-.t-default Bar > .bar--complete { color: #00dadf; background: #00dadf; }
-.t-default Toast { background: #24283b; color: #c0caf5; border: tall #414868; }
-.t-default ToastTitle { color: #00dadf; text-style: bold; }
 
-/* ---------- Modern Color Palette ---------- */
-Screen.t-modern { background: #003f54; }
-ModalScreen.t-modern { background: rgba(0,0,0, 0.5); border: none; }
-.t-modern #confirm-dialog, .t-modern #input-dialog, .t-modern #progress-dialog { background: #006699; border: none; }
-.t-modern #logo { color: #00a8cc; }
-.t-modern #version { color: #d9e8f5; }
-.t-modern #help-text, .t-modern #output-text, .t-modern #input-label, .t-modern #task-label { color: #d9e8f5; }
-.t-modern #input-container, .t-modern #themes-panel, .t-modern #menu-panel, .t-modern #about-panel { background: #006699; border: tall #00a8cc; }
-.t-modern #themes-nav, .t-modern #themes-title, .t-modern #menu-nav, .t-modern #menu-title, .t-modern #about-title, .t-modern #about-text, .t-modern #about-nav { color: #d9e8f5; }
-.t-modern #prompt, .t-modern .confirm-option.selected { color: #ff6600; }
-.t-modern #input-label, .t-modern #confirm-question, .t-modern .confirm-option, .t-modern #confirm-help { color: #d9e8f5; }
-.t-modern #input-dialog Input { border: tall #d9e8f5; }
-.t-modern #input-dialog Input:focus { border: tall #00a8cc; }
-.t-modern Bar > .bar--complete { color: #00a8cc; background: #00a8cc; }
-.t-modern Toast { background: #006699; color: #d9e8f5; border: tall #00a8cc; }
-.t-modern ToastTitle { color: #ff6600; text-style: bold; }
+def log_palette_colors(theme_class: str) -> tuple[str, str]:
+    """Return (accent, fail) Rich color hex strings for a theme class.
 
-/* ---------- Too Modern ---------- */
-Screen.t-too-modern { background: #323a45; }
-ModalScreen.t-too-modern { background: rgba(0,0,0, 0.5); border: none; }
-.t-too-modern #confirm-dialog, .t-too-modern #input-dialog, .t-too-modern #progress-dialog { background: #3f6184; border: none; }
-.t-too-modern #logo { color: #5faeb6; }
-.t-too-modern #version { color: #f6f7f9; }
-.t-too-modern #help-text, .t-too-modern #output-text, .t-too-modern #input-label, .t-too-modern #task-label { color: #f6f7f9; }
-.t-too-modern #input-container, .t-too-modern #themes-panel, .t-too-modern #menu-panel, .t-too-modern #about-panel { background: #3f6184; border: tall #778899; }
-.t-too-modern #themes-nav, .t-too-modern #themes-title, .t-too-modern #menu-nav, .t-too-modern #menu-title, .t-too-modern #about-title, .t-too-modern #about-text, .t-too-modern #about-nav { color: #f6f7f9; }
-.t-too-modern #prompt, .t-too-modern .confirm-option.selected { color: #5faeb6; }
-.t-too-modern #input-label, .t-too-modern #confirm-question, .t-too-modern .confirm-option, .t-too-modern #confirm-help { color: #f6f7f9; }
-.t-too-modern #input-dialog Input { border: tall #f6f7f9; }
-.t-too-modern #input-dialog Input:focus { border: tall #5faeb6; }
-.t-too-modern Bar > .bar--complete { color: #5faeb6; background: #5faeb6; }
-.t-too-modern Toast { background: #3f6184; color: #f6f7f9; border: tall #778899; }
-.t-too-modern ToastTitle { color: #5faeb6; text-style: bold; }
+    `accent` is the theme's own accent (varies per theme); `fail` is a
+    universal warning red chosen to read on every dark palette.
+    """
+    palette = THEME_PALETTES.get(theme_class) or THEME_PALETTES["t-default"]
+    return str(palette["accent"]), "#f7768e"
 
-/* ---------- Coppice ---------- */
-Screen.t-coppice { background: #2d3037; }
-ModalScreen.t-coppice { background: rgba(0,0,0, 0.5); border: none; }
-.t-coppice #confirm-dialog, .t-coppice #input-dialog, .t-coppice #progress-dialog { background: #2d4440; border: none; }
-.t-coppice #logo { color: #3f6567; }
-.t-coppice #version { color: #f6f7f9; }
-.t-coppice #help-text, .t-coppice #output-text, .t-coppice #input-label, .t-coppice #task-label { color: #f6f7f9; }
-.t-coppice #input-container, .t-coppice #themes-panel, .t-coppice #menu-panel, .t-coppice #about-panel { background: #2d4440; border: tall #354e54; }
-.t-coppice #themes-nav, .t-coppice #themes-title, .t-coppice #menu-nav, .t-coppice #menu-title, .t-coppice #about-title, .t-coppice #about-text, .t-coppice #about-nav { color: #f6f7f9; }
-.t-coppice #prompt, .t-coppice .confirm-option.selected { color: #356f72; }
-.t-coppice #input-label, .t-coppice #confirm-question, .t-coppice .confirm-option, .t-coppice #confirm-help { color: #f6f7f9; }
-.t-coppice #input-dialog Input { border: tall #f6f7f9; }
-.t-coppice #input-dialog Input:focus { border: tall #356f72; }
-.t-coppice Bar > .bar--complete { color: #356f72; background: #356f72; }
-.t-coppice Toast { background: #2d4440; color: #f6f7f9; border: tall #354e54; }
-.t-coppice ToastTitle { color: #356f72; text-style: bold; }
 
-/* ---------- Hunter ---------- */
-Screen.t-hunter { background: #2a3d47; }
-ModalScreen.t-hunter { background: rgba(0,0,0, 0.5); border: none; }
-.t-hunter #confirm-dialog, .t-hunter #input-dialog, .t-hunter #progress-dialog { background: #3e474f; border: none; }
-.t-hunter #logo { color: #47763d; }
-.t-hunter #version { color: #838f9b; }
-.t-hunter #help-text, .t-hunter #output-text, .t-hunter #input-label, .t-hunter #task-label { color: #838f9b; }
-.t-hunter #input-container, .t-hunter #themes-panel, .t-hunter #menu-panel, .t-hunter #about-panel { background: #3e474f; border: tall #646f79; }
-.t-hunter #themes-nav, .t-hunter #themes-title, .t-hunter #menu-nav, .t-hunter #menu-title, .t-hunter #about-title, .t-hunter #about-text, .t-hunter #about-nav { color: #838f9b; }
-.t-hunter #prompt, .t-hunter .confirm-option.selected { color: #47763d; }
-.t-hunter #input-label, .t-hunter #confirm-question, .t-hunter .confirm-option, .t-hunter #confirm-help { color: #838f9b; }
-.t-hunter #input-dialog Input { border: tall #838f9b; }
-.t-hunter #input-dialog Input:focus { border: tall #47763d; }
-.t-hunter Bar > .bar--complete { color: #47763d; background: #47763d; }
-.t-hunter Toast { background: #3e474f; color: #838f9b; border: tall #646f79; }
-.t-hunter ToastTitle { color: #47763d; text-style: bold; }
+THEME_PALETTES = {
+    "t-default": {
+        "bg": "#1e1e2e",
+        "panel": "#24283b",
+        "panel_border": "#414868",
+        "logo": "#00a9ae",
+        "version": "#565f89",
+        "text": "#c0caf5",
+        "accent": "#00dadf",
+        "highlight": "#00dadf",
+        "input_border": "#565f89",
+        "status_in_help": True,
+    },
+    "t-modern": {
+        "bg": "#003f54",
+        "panel": "#006699",
+        "panel_border": "#00a8cc",
+        "logo": "#00a8cc",
+        "version": "#d9e8f5",
+        "text": "#d9e8f5",
+        "accent": "#ff6600",
+        "highlight": "#00a8cc",
+        "input_border": "#d9e8f5",
+        "status_in_help": False,
+    },
+    "t-too-modern": {
+        "bg": "#323a45",
+        "panel": "#3f6184",
+        "panel_border": "#778899",
+        "logo": "#5faeb6",
+        "version": "#f6f7f9",
+        "text": "#f6f7f9",
+        "accent": "#5faeb6",
+        "highlight": "#5faeb6",
+        "input_border": "#f6f7f9",
+        "status_in_help": False,
+    },
+    "t-coppice": {
+        "bg": "#2d3037",
+        "panel": "#2d4440",
+        "panel_border": "#354e54",
+        "logo": "#3f6567",
+        "version": "#f6f7f9",
+        "text": "#f6f7f9",
+        "accent": "#356f72",
+        "highlight": "#356f72",
+        "input_border": "#f6f7f9",
+        "status_in_help": False,
+    },
+    "t-hunter": {
+        "bg": "#2a3d47",
+        "panel": "#3e474f",
+        "panel_border": "#646f79",
+        "logo": "#47763d",
+        "version": "#838f9b",
+        "text": "#838f9b",
+        "accent": "#47763d",
+        "highlight": "#47763d",
+        "input_border": "#838f9b",
+        "status_in_help": False,
+    },
+    "t-accident": {
+        "bg": "#182c40",
+        "panel": "#20374e",
+        "panel_border": "#28415b",
+        "logo": "#5e768d",
+        "version": "#435c74",
+        "text": "#435c74",
+        "accent": "#5e768d",
+        "highlight": "#5e768d",
+        "input_border": "#435c74",
+        "status_in_help": False,
+    },
+    "t-bleu-gris": {
+        "bg": "#111822",
+        "panel": "#191d27",
+        "panel_border": "#263342",
+        "logo": "#263342",
+        "version": "#303f50",
+        "text": "#303f50",
+        "accent": "#3f5f70",
+        "highlight": "#3f5f70",
+        "input_border": "#303f50",
+        "status_in_help": False,
+    },
+    "t-pink": {
+        "bg": "#16537e",
+        "panel": "#1f6a9e",
+        "panel_border": "#6c59b2",
+        "logo": "#ac86be",
+        "version": "#e0e0e0",
+        "text": "#e0e0e0",
+        "accent": "#edbfd5",
+        "highlight": "#edbfd5",
+        "input_border": "#e0e0e0",
+        "status_in_help": False,
+    },
+}
 
-/* ---------- Accident ---------- */
-Screen.t-accident { background: #182c40; }
-ModalScreen.t-accident { background: rgba(0,0,0, 0.5); border: none; }
-.t-accident #confirm-dialog, .t-accident #input-dialog, .t-accident #progress-dialog { background: #20374e; border: none; }
-.t-accident #logo { color: #5e768d; }
-.t-accident #version { color: #435c74; }
-.t-accident #help-text, .t-accident #output-text, .t-accident #input-label, .t-accident #task-label { color: #435c74; }
-.t-accident #input-container, .t-accident #themes-panel, .t-accident #menu-panel, .t-accident #about-panel { background: #20374e; border: tall #28415b; }
-.t-accident #themes-nav, .t-accident #themes-title, .t-accident #menu-nav, .t-accident #menu-title, .t-accident #about-title, .t-accident #about-text, .t-accident #about-nav { color: #435c74; }
-.t-accident #prompt, .t-accident .confirm-option.selected { color: #5e768d; }
-.t-accident #input-label, .t-accident #confirm-question, .t-accident .confirm-option, .t-accident #confirm-help { color: #435c74; }
-.t-accident #input-dialog Input { border: tall #435c74; }
-.t-accident #input-dialog Input:focus { border: tall #5e768d; }
-.t-accident Bar > .bar--complete { color: #5e768d; background: #5e768d; }
-.t-accident Toast { background: #20374e; color: #435c74; border: tall #28415b; }
-.t-accident ToastTitle { color: #5e768d; text-style: bold; }
 
-/* ---------- Bleu Gris ---------- */
-Screen.t-bleu-gris { background: #111822; }
-ModalScreen.t-bleu-gris { background: rgba(0,0,0, 0.5); border: none; }
-.t-bleu-gris #confirm-dialog, .t-bleu-gris #input-dialog, .t-bleu-gris #progress-dialog { background: #191d27; border: none; }
-.t-bleu-gris #logo { color: #263342; }
-.t-bleu-gris #version { color: #303f50; }
-.t-bleu-gris #help-text, .t-bleu-gris #output-text, .t-bleu-gris #input-label, .t-bleu-gris #task-label { color: #303f50; }
-.t-bleu-gris #input-container, .t-bleu-gris #themes-panel, .t-bleu-gris #menu-panel, .t-bleu-gris #about-panel { background: #191d27; border: tall #263342; }
-.t-bleu-gris #themes-nav, .t-bleu-gris #themes-title, .t-bleu-gris #menu-nav, .t-bleu-gris #menu-title, .t-bleu-gris #about-title, .t-bleu-gris #about-text, .t-bleu-gris #about-nav { color: #303f50; }
-.t-bleu-gris #prompt, .t-bleu-gris .confirm-option.selected { color: #3f5f70; }
-.t-bleu-gris #input-label, .t-bleu-gris #confirm-question, .t-bleu-gris .confirm-option, .t-bleu-gris #confirm-help { color: #303f50; }
-.t-bleu-gris #input-dialog Input { border: tall #303f50; }
-.t-bleu-gris #input-dialog Input:focus { border: tall #3f5f70; }
-.t-bleu-gris Bar > .bar--complete { color: #3f5f70; background: #3f5f70; }
-.t-bleu-gris Toast { background: #191d27; color: #303f50; border: tall #263342; }
-.t-bleu-gris ToastTitle { color: #3f5f70; text-style: bold; }
-
-/* ---------- Pink ---------- */
-Screen.t-pink { background: #16537e; }
-ModalScreen.t-pink { background: rgba(0,0,0, 0.5); border: none; }
-.t-pink #confirm-dialog, .t-pink #input-dialog, .t-pink #progress-dialog { background: #1f6a9e; border: none; }
-.t-pink #logo { color: #ac86be; }
-.t-pink #version { color: #e0e0e0; }
-.t-pink #help-text, .t-pink #output-text, .t-pink #input-label, .t-pink #task-label { color: #e0e0e0; }
-.t-pink #input-container, .t-pink #themes-panel, .t-pink #menu-panel, .t-pink #about-panel { background: #1f6a9e; border: tall #6c59b2; }
-.t-pink #themes-nav, .t-pink #themes-title, .t-pink #menu-nav, .t-pink #menu-title, .t-pink #about-title, .t-pink #about-text, .t-pink #about-nav { color: #e0e0e0; }
-.t-pink #prompt, .t-pink .confirm-option.selected { color: #edbfd5; }
-.t-pink #input-label, .t-pink #confirm-question, .t-pink .confirm-option, .t-pink #confirm-help { color: #e0e0e0; }
-.t-pink #input-dialog Input { border: tall #e0e0e0; }
-.t-pink #input-dialog Input:focus { border: tall #edbfd5; }
-.t-pink Bar > .bar--complete { color: #edbfd5; background: #edbfd5; }
-.t-pink Toast { background: #1f6a9e; color: #e0e0e0; border: tall #6c59b2; }
-.t-pink ToastTitle { color: #edbfd5; text-style: bold; }
+def _theme_css(name: str, p: dict) -> str:
+    status_part = f", .{name} #status-label" if p["status_in_help"] else ""
+    return f"""/* ---------- {THEME_NAMES[name]} ---------- */
+Screen.{name} {{ background: {p["bg"]}; }}
+ModalScreen.{name} {{ background: rgba(0,0,0, 0.5); border: none; }}
+.{name} #confirm-dialog, .{name} #input-dialog, .{name} #progress-dialog, .{name} #preview-dialog {{ background: {p["panel"]}; border: none; }}
+.{name} #logo {{ color: {p["logo"]}; }}
+.{name} #version {{ color: {p["version"]}; }}
+.{name} #help-text, .{name} #output-text, .{name} #input-label, .{name} #task-label{status_part} {{ color: {p["text"]}; }}
+.{name} #input-container, .{name} #themes-panel, .{name} #menu-panel, .{name} #about-panel {{ background: {p["panel"]}; border: tall {p["panel_border"]}; }}
+.{name} #themes-nav, .{name} #themes-title, .{name} #menu-nav, .{name} #menu-title, .{name} #about-title, .{name} #about-text, .{name} #about-nav, .{name} #preview-title, .{name} #preview-content, .{name} #preview-help {{ color: {p["text"]}; }}
+.{name} #prompt, .{name} .confirm-option.selected {{ color: {p["accent"]}; }}
+.{name} #input-label, .{name} #confirm-question, .{name} .confirm-option, .{name} #confirm-help {{ color: {p["text"]}; }}
+.{name} #input-dialog Input {{ border: tall {p["input_border"]}; }}
+.{name} #input-dialog Input:focus {{ border: tall {p["highlight"]}; }}
+.{name} Bar > .bar--complete {{ color: {p["highlight"]}; background: {p["highlight"]}; }}
+.{name} Toast {{ background: {p["panel"]}; color: {p["text"]}; border: tall {p["panel_border"]}; }}
+.{name} ToastTitle {{ color: {p["accent"]}; text-style: bold; }}
 """
+
+
+THEMES_CSS = "\n".join(_theme_css(name, THEME_PALETTES[name]) for name in THEME_ORDER)

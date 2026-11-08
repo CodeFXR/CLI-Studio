@@ -1,0 +1,114 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cli-studio"
+version = "1.0.0"
+description = "Terminal media dashboard wrapping ffmpeg, yt-dlp, Pillow, ImageMagick, ExifTool, tesseract, mkvtoolnix, HandBrakeCLI, gallery-dl, ffmpeg-normalize, rclone, zbarimg, chafa, optional faster-whisper, and Real-ESRGAN ncnn behind a single menu-driven TUI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "CodeFXR" }]
+keywords = [
+    "tui",
+    "textual",
+    "ffmpeg",
+    "yt-dlp",
+    "tesseract",
+    "mkvtoolnix",
+    "media",
+    "video",
+    "audio",
+    "image",
+    "cloud",
+    "terminal",
+]
+classifiers = [
+    "Environment :: Console",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia",
+    "Topic :: Utilities",
+]
+
+dependencies = [
+    "textual>=0.85,<10.0",
+    "textual-image>=0.10,<2.0",
+    "Pillow>=10.0,<15.0",
+    "yt-dlp>=2024.1.1",
+    "natsort>=8.0,<10.0",
+]
+
+[project.optional-dependencies]
+ocr = ["pytesseract>=0.3.10"]
+normalizers = ["ffmpeg-normalize>=1.27"]
+galleries = ["gallery-dl>=1.26"]
+ai = ["faster-whisper>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Homepage = "https://github.com/codefxr/cli-studio"
+Issues = "https://github.com/codefxr/cli-studio/issues"
+
+[project.scripts]
+cli-studio = "cli_studio:main"
+cso = "cli_studio:main"
+
+[tool.setuptools]
+py-modules = ["config", "studio_themes", "cli_studio"]
+
+[tool.setuptools.package-data]
+"*" = ["cli-studio_icon.png"]
+
+[tool.setuptools.packages.find]
+include = ["ui*", "workflows*"]
+exclude = ["tests*", "dev_docs*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["dev_docs", "build", "dist", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "UP"]
+ignore = [
+    "E501",
+    "E701",
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+"workflows/image.py" = ["B904"]
+"workflows/utils.py" = ["B904"]
+"ui/screens.py" = ["E741"]
+
+
+
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = false
+no_implicit_optional = false
+show_error_codes = true
+explicit_package_bases = true
