@@ -71,6 +71,7 @@ cso = "cli_studio:main"
 py-modules = ["config", "studio_themes", "cli_studio"]
 
 [tool.setuptools.package-data]
+"ui" = ["*.png"]
 "*" = ["cli-studio_icon.png"]
 
 [tool.setuptools.packages.find]
@@ -80,6 +81,7 @@ exclude = ["tests*", "dev_docs*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 

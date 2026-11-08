@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, CLI-Studio]
   pull_request:
-    branches: [main, master]
+    branches: [main, master, CLI-Studio]
 
 jobs:
   test:
@@ -38,9 +38,8 @@ jobs:
       - name: Ruff (lint)
         run: ruff check .
 
-      - name: Mypy (loose mode; informational)
-        continue-on-error: true
-        run: mypy --ignore-missing-imports cli-studio.py config.py studio_themes.py workflows/ ui/
+      - name: Mypy (type check)
+        run: mypy .
 
       - name: Pytest
         run: pytest -v

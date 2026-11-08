@@ -301,6 +301,11 @@ def validate_decimal(v: str, min_val: float | None = None, max_val: float | None
     return v
 
 
+def validate_quality(v: str) -> str:
+    validate_decimal(v, min_val=1, max_val=100)
+    return str(int(float(v)))
+
+
 def validate_remote_name(v: str) -> str:
     if not v.strip():
         raise ValueError("Remote name cannot be empty.")
@@ -325,6 +330,19 @@ def validate_cache_dir(v: str) -> str:
     if not v.strip():
         return ""
     expanded = os.path.realpath(os.path.expanduser(v))
+    allowed_roots = [
+        os.path.realpath(os.path.expanduser("~")),
+        os.path.realpath("/tmp"),
+        os.path.realpath("/var/tmp"),
+    ]
+    if not any(
+        expanded == root or expanded.startswith(root.rstrip("/") + "/")
+        for root in allowed_roots
+    ):
+        raise ValueError(
+            f"Cache directory '{v}' resolves to '{expanded}'. "
+            "Use a path under $HOME, /tmp, or /var/tmp."
+        )
     for prefix in _BLOCKED_CACHE_PREFIXES:
         resolved_prefix = os.path.realpath(prefix)
         if expanded == resolved_prefix.rstrip("/") or expanded.startswith(resolved_prefix + "/"):

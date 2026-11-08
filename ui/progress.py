@@ -58,12 +58,21 @@ class _LoggingModalScreen(ModalScreen[Any]):
             return
         try:
             if hasattr(os, "killpg"):
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                pgid = os.getpgid(proc.pid)
+                os.killpg(pgid, signal.SIGTERM)
+                try:
+                    proc.wait(timeout=0.2)
+                except (subprocess.TimeoutExpired, Exception):
+                    os.killpg(pgid, signal.SIGKILL)
             else:
                 proc.terminate()
+                try:
+                    proc.wait(timeout=0.2)
+                except (subprocess.TimeoutExpired, Exception):
+                    proc.kill()
         except (ProcessLookupError, OSError):
             try:
-                proc.terminate()
+                proc.kill()
             except Exception:
                 pass
 
@@ -543,6 +552,8 @@ class PillowProgressScreen(_LoggingModalScreen):
 
         if self.action == "to_pdf":
             try:
+                if os.path.islink(expanded_out):
+                    raise ValueError(f"Output path cannot be a symbolic link: {expanded_out}")
                 if os.path.isdir(expanded_in):
                     files = [
                         f
@@ -579,7 +590,7 @@ class PillowProgressScreen(_LoggingModalScreen):
                 else:
                     with Image.open(expanded_in) as img:
                         img.convert("RGB").save(expanded_out)
-                self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
+                    self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
             except Exception as e:
                 self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
             self.app.call_from_thread(self.safe_dismiss)
@@ -623,7 +634,7 @@ class PillowProgressScreen(_LoggingModalScreen):
                     failures.append(f)
                     self.app.call_from_thread(
                         self.write_log,
-                        self._log_msg("failed", f"{escape(f)} ({e})"),
+                        self._log_msg("failed", f"{escape(f)} ({escape(str(e))})"),
                     )
                 if bar:
                     self.app.call_from_thread(bar.update, progress=idx + 1)
@@ -650,6 +661,15 @@ class PillowProgressScreen(_LoggingModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
+        if os.path.islink(expanded_out):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Output cannot be a symbolic link: {escape(expanded_out)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
         out_dir = os.path.dirname(expanded_out)
         if out_dir and not os.path.exists(out_dir):
             try:
@@ -672,7 +692,5 @@ class PillowProgressScreen(_LoggingModalScreen):
             )
         except Exception as e:
             self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
-
-        self.app.call_from_thread(self.safe_dismiss)
 
         self.app.call_from_thread(self.safe_dismiss)

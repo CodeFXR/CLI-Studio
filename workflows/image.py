@@ -3,7 +3,13 @@ from typing import cast
 
 from natsort import natsorted
 
-from config import validate_coords, validate_decimal, validate_dimensions, validate_exif_tag
+from config import (
+    validate_coords,
+    validate_decimal,
+    validate_dimensions,
+    validate_exif_tag,
+    validate_quality,
+)
 from ui.progress import GenericCliProgressScreen, PillowProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.backends import ImageMagickBackend, get_backend
@@ -213,7 +219,7 @@ def build_compress_image_flow():
         return TextInputScreen("Quality (1-100):", "60", "60", state, step3)
 
     def step3(qual, state):
-        state["qual"] = validate_decimal(qual)
+        state["qual"] = validate_quality(qual)
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen("Save As (or dir):", f"{base}_opt.jpg", state, step4)
 

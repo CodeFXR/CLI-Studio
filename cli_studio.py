@@ -76,7 +76,11 @@ ABOUT_TEXT = (
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ICON_FILENAME = "cli-studio_icon.png"
-ICON_PATH = os.path.join(SCRIPT_DIR, ICON_FILENAME)
+_candidate_icon_paths = [
+    os.path.join(SCRIPT_DIR, ICON_FILENAME),
+    os.path.join(SCRIPT_DIR, "ui", ICON_FILENAME),
+]
+ICON_PATH = next((p for p in _candidate_icon_paths if os.path.exists(p)), _candidate_icon_paths[0])
 
 _COMMANDS = {
     "/home": lambda s: s.action_go_home(),

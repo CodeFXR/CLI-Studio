@@ -924,6 +924,36 @@ def test_probe_attachments_parses_valid_output(monkeypatch):
     ]
 
 
+def test_probe_attachments_parses_native_ffprobe_streams(monkeypatch):
+    import json
+    from workflows import mkv
+
+    class FakeRes:
+        returncode = 0
+        stdout = json.dumps({
+            "streams": [
+                {"index": 0, "codec_type": "video"},
+                {
+                    "index": 1,
+                    "codec_type": "attachment",
+                    "tags": {
+                        "filename": "font.ttf",
+                        "mimetype": "font/ttf",
+                        "NUMBER_OF_BYTES": "54321",
+                    },
+                },
+            ]
+        })
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeRes())
+    res = mkv._probe_attachments("/tmp/test.mkv")
+    assert len(res) == 1
+    assert res[0]["filename"] == "font.ttf"
+    assert res[0]["mimetype"] == "font/ttf"
+    assert res[0]["size"] == 54321
+
+
 def test_probe_attachments_returns_empty_on_bad_json(monkeypatch):
     from workflows import mkv
 

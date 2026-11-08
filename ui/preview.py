@@ -1,5 +1,6 @@
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 from typing import cast
@@ -22,6 +23,8 @@ class PreviewModalScreen(ModalScreen):
         super().__init__()
         self.input_path = input_path
         self.preview_type = preview_type
+        self.process: subprocess.Popen | None = None
+        self._cancelled = False
 
     def compose(self) -> ComposeResult:
         title = "Image Preview" if self.preview_type == "image" else "Audio Waveform Preview"
@@ -34,7 +37,51 @@ class PreviewModalScreen(ModalScreen):
         self.run_worker(self.run_preview, exclusive=True, thread=True)
 
     def action_close(self) -> None:
+        self._cancelled = True
+        self._kill_process()
         self.dismiss()
+
+    def _kill_process(self) -> None:
+        proc = self.process
+        if proc:
+            try:
+                if hasattr(os, "killpg"):
+                    pgid = os.getpgid(proc.pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                    try:
+                        proc.wait(timeout=0.2)
+                    except (subprocess.TimeoutExpired, Exception):
+                        os.killpg(pgid, signal.SIGKILL)
+                else:
+                    proc.terminate()
+            except (ProcessLookupError, OSError):
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+    def _run_cmd(self, cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+        if self._cancelled:
+            raise RuntimeError("Preview cancelled")
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+        )
+        self.process = proc
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            self._kill_process()
+            raise
+        except Exception:
+            self._kill_process()
+            raise
+        finally:
+            self.process = None
 
     def _show_content(self, output: str, status: str) -> None:
         self.query_one("#preview-content", Static).update(Text.from_ansi(output))
@@ -48,7 +95,7 @@ class PreviewModalScreen(ModalScreen):
     def _render_preview(self, image_path: str) -> tuple[str, str]:
         backend = cast(ChafaBackend, get_backend("chafa"))
         command = backend.build_render_command(image_path, width=76, height=20)
-        result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+        result = self._run_cmd(command, timeout=30)
         if result.returncode != 0:
             detail = result.stderr.strip() or "chafa could not render this file"
             raise RuntimeError(detail)
@@ -58,11 +105,11 @@ class PreviewModalScreen(ModalScreen):
         backend = cast(ChafaBackend, get_backend("chafa"))
         if shutil.which("audiowaveform"):
             command = backend.build_audiowaveform_command(input_path, output_path)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            result = self._run_cmd(command, timeout=120)
             if result.returncode == 0 and os.path.exists(output_path):
                 return
         command = backend.build_waveform_command(input_path, output_path)
-        result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+        result = self._run_cmd(command, timeout=120)
         if result.returncode != 0:
             detail = result.stderr.strip() or "ffmpeg could not create a waveform"
             raise RuntimeError(detail)

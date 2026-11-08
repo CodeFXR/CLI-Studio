@@ -48,17 +48,12 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
 
     Returns a list of dicts: {"index": int, "filename": str, "mimetype": str, "size": int}.
     Returns an empty list on any error.
-
-    Note: attachment indices reported here are the per-stream indices, but
-    mkvextract attachments expects attachment-specific IDs. We use the array
-    position as a stable handle instead.
     """
     cmd = [
         "ffprobe",
         "-v",
         "error",
-        "-show_entries",
-        "attachment=index,filename,mimetype,size",
+        "-show_streams",
         "-of",
         "json",
         mkv_path,
@@ -73,7 +68,32 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         data = json.loads(res.stdout)
     except json.JSONDecodeError:
         return []
-    return data.get("attachments", [])
+
+    attachments: list[dict] = []
+    for stream in data.get("streams", []):
+        if stream.get("codec_type") == "attachment":
+            tags = stream.get("tags", {})
+            filename = tags.get("filename") or f"attachment_{stream.get('index', 0)}"
+            mimetype = tags.get("mimetype") or ""
+            try:
+                size = int(tags.get("NUMBER_OF_BYTES", 0) or 0)
+            except (ValueError, TypeError):
+                size = 0
+            attachments.append(
+                {
+                    "index": stream.get("index", 0),
+                    "filename": filename,
+                    "mimetype": mimetype,
+                    "size": size,
+                }
+            )
+
+    if not attachments and "attachments" in data:
+        for att in data.get("attachments", []):
+            if isinstance(att, dict):
+                attachments.append(att)
+
+    return attachments
 
 
 def build_remux_to_mkv_flow():
