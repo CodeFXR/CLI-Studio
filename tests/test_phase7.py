@@ -1,5 +1,6 @@
 import pytest
 from pathlib import Path
+from typing import Any
 from PIL import Image
 from textual.widgets import OptionList
 
@@ -294,8 +295,8 @@ def test_plugin_loader_registers_commands_menus_and_help(tmp_path):
         encoding="utf-8",
     )
     registry = {"built-in": lambda: None}
-    menus = {"main": []}
-    help_registry = {}
+    menus: dict[str, list[str]] = {"main": []}
+    help_registry: dict[str, str] = {}
 
     loaded = load_plugins(registry, tmp_path, menus=menus, help_registry=help_registry)
 
@@ -335,7 +336,7 @@ def test_plugin_loader_continues_after_broken_plugin(tmp_path):
         "PLUGIN_REGISTRY = {'working tool': lambda: None}\n",
         encoding="utf-8",
     )
-    registry = {}
+    registry: dict[str, Any] = {}
 
     loaded = load_plugins(registry, tmp_path)
 
@@ -345,7 +346,7 @@ def test_plugin_loader_continues_after_broken_plugin(tmp_path):
 
 def test_plugin_loader_creates_missing_directory(tmp_path):
     plugin_dir = tmp_path / "nested" / "plugins"
-    registry = {}
+    registry: dict[str, Any] = {}
 
     assert load_plugins(registry, plugin_dir) == 0
     assert plugin_dir.is_dir()

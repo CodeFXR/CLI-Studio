@@ -219,7 +219,15 @@ def _load_full_config() -> dict:
         merged = dict(DEFAULT_CONFIG)
         merged.update(data)
         return merged
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        if isinstance(e, json.JSONDecodeError):
+            try:
+                corrupt_backup = f"{CONFIG_FILE}.corrupt"
+                if not os.path.exists(corrupt_backup):
+                    import shutil
+                    shutil.copy2(CONFIG_FILE, corrupt_backup)
+            except OSError:
+                pass
         return dict(DEFAULT_CONFIG)
 
 

@@ -2,7 +2,7 @@ import os
 import re
 import signal
 import subprocess
-from typing import cast
+from typing import Any, cast
 
 import config
 from natsort import natsorted
@@ -27,11 +27,23 @@ def _ffmpeg_overwrite_flag() -> str:
     return "-y" if overwrite else "-n"
 
 
-class _LoggingModalScreen:
+class _LoggingModalScreen(ModalScreen[Any]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._dismissed = False
         self._cancelled = False
+        self._app_override = None
+
+    @property
+    def app(self) -> Any:
+        try:
+            return getattr(self, "_app_override", None) or super().app
+        except Exception:
+            return getattr(self, "_app_override", None)
+
+    @app.setter
+    def app(self, value: Any) -> None:
+        self._app_override = value
 
     def safe_dismiss(self):
         if not getattr(self, "_dismissed", False):
@@ -57,11 +69,11 @@ class _LoggingModalScreen:
 
     def write_log(self, text):
         try:
-            log = self.app.query_one("#terminal-log")
+            log = cast(Any, self.app.query_one("#terminal-log"))
             log.write(text)
         except Exception:
             try:
-                log = self.app.query_one("#terminal-log")
+                log = cast(Any, self.app.query_one("#terminal-log"))
                 log.write(escape(str(text)))
             except Exception:
                 pass
@@ -75,7 +87,7 @@ class _LoggingModalScreen:
         return f"[bold {color}]{kind.title()}:[/bold {color}] {body}"
 
 
-class DownloadProgressScreen(_LoggingModalScreen, ModalScreen):
+class DownloadProgressScreen(_LoggingModalScreen):
     BINDINGS = [("escape", "cancel_download", "Cancel")]
 
     def __init__(
@@ -94,7 +106,8 @@ class DownloadProgressScreen(_LoggingModalScreen, ModalScreen):
         self.remote_components = remote_components
         self.is_audio = is_audio
         self.is_playlist = is_playlist
-        self.process = None
+        self.process: subprocess.Popen[Any] | None = None
+        self.progress_bar: ProgressBar | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
@@ -165,30 +178,33 @@ class DownloadProgressScreen(_LoggingModalScreen, ModalScreen):
 
         percent_re = re.compile(r"(\d{1,3}\.\d)%")
 
-        for line in self.process.stdout:
-            self.app.call_from_thread(self.write_log, escape(line.strip()))
-            if worker.is_cancelled or self._cancelled:
-                self._kill_process_group(self.process)
-                break
+        proc = self.process
+        if proc and proc.stdout:
+            for line in proc.stdout:
+                self.app.call_from_thread(self.write_log, escape(line.strip()))
+                if worker.is_cancelled or self._cancelled:
+                    self._kill_process_group(proc)
+                    break
 
-            match = percent_re.search(line)
-            if match:
-                try:
-                    p = float(match.group(1))
-                    self.app.call_from_thread(bar.update, progress=p)
-                except ValueError:
-                    pass
+                match = percent_re.search(line)
+                if match:
+                    try:
+                        p = float(match.group(1))
+                        if bar:
+                            self.app.call_from_thread(bar.update, progress=p)
+                    except ValueError:
+                        pass
 
-        self.process.wait()
-        if self.process.returncode == 0:
-            self.app.call_from_thread(self.app.notify, "Download Complete!", severity="information")
-        elif self.process.returncode != -15:
-            self.app.call_from_thread(self.app.notify, "Download Failed.", severity="error")
+            proc.wait()
+            if proc.returncode == 0:
+                self.app.call_from_thread(self.app.notify, "Download Complete!", severity="information")
+            elif proc.returncode != -15:
+                self.app.call_from_thread(self.app.notify, "Download Failed.", severity="error")
 
         self.app.call_from_thread(self.safe_dismiss)
 
 
-class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
+class FfmpegProgressScreen(_LoggingModalScreen):
     BINDINGS = [("escape", "cancel_process", "Cancel")]
 
     def __init__(
@@ -199,7 +215,8 @@ class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
         self.output_file = output_file
         self.action_args = action_args
         self.target_ext = target_ext
-        self.process = None
+        self.process: subprocess.Popen[Any] | None = None
+        self.progress_bar: ProgressBar | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
@@ -254,7 +271,8 @@ class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
             files = media_files if media_files else all_files
 
             bar = self.progress_bar
-            self.app.call_from_thread(bar.update, total=len(files), progress=0)
+            if bar:
+                self.app.call_from_thread(bar.update, total=len(files), progress=0)
 
             failures = []
             for idx, f in enumerate(files):
@@ -287,7 +305,8 @@ class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
                         self.write_log,
                         self._log_msg("failed", f"{escape(f)} (exit {rc})"),
                     )
-                self.app.call_from_thread(bar.update, progress=idx + 1)
+                if bar:
+                    self.app.call_from_thread(bar.update, progress=idx + 1)
 
             if self._cancelled or worker.is_cancelled:
                 self.app.call_from_thread(
@@ -343,24 +362,26 @@ class FfmpegProgressScreen(_LoggingModalScreen, ModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
-        for line in self.process.stdout:
-            self.app.call_from_thread(self.write_log, escape(line.strip()))
-            if worker.is_cancelled or self._cancelled:
-                self._kill_process_group(self.process)
-                break
+        proc = self.process
+        if proc and proc.stdout:
+            for line in proc.stdout:
+                self.app.call_from_thread(self.write_log, escape(line.strip()))
+                if worker.is_cancelled or self._cancelled:
+                    self._kill_process_group(proc)
+                    break
 
-        self.process.wait()
-        if self.process.returncode == 0:
-            self.app.call_from_thread(
-                self.app.notify, "Processing Complete!", severity="information"
-            )
-        elif self.process.returncode != -15:
-            self.app.call_from_thread(self.app.notify, "Processing Failed.", severity="error")
+            proc.wait()
+            if proc.returncode == 0:
+                self.app.call_from_thread(
+                    self.app.notify, "Processing Complete!", severity="information"
+                )
+            elif proc.returncode != -15:
+                self.app.call_from_thread(self.app.notify, "Processing Failed.", severity="error")
 
         self.app.call_from_thread(self.safe_dismiss)
 
 
-class GenericCliProgressScreen(_LoggingModalScreen, ModalScreen):
+class GenericCliProgressScreen(_LoggingModalScreen):
     BINDINGS = [("escape", "cancel_process", "Cancel")]
 
     def __init__(self, cmds, tool_name: str, target: str, out_file: str | None = None):
@@ -374,7 +395,8 @@ class GenericCliProgressScreen(_LoggingModalScreen, ModalScreen):
         self.out_file = out_file or (
             target if str(target).lower().endswith(".txt") and not os.path.isdir(str(target)) else None
         )
-        self.process = None
+        self.process: subprocess.Popen[Any] | None = None
+        self.progress_bar: ProgressBar | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
@@ -428,25 +450,28 @@ class GenericCliProgressScreen(_LoggingModalScreen, ModalScreen):
                 self._log_msg("executing", escape(" ".join(cmd))),
             )
 
-            for line in self.process.stdout:
-                self.app.call_from_thread(self.write_log, escape(line.strip()))
-                if self.out_file:
-                    captured_output.append(line)
-                if worker.is_cancelled or self._cancelled:
-                    self._kill_process_group(self.process)
+            proc = self.process
+            if proc and proc.stdout:
+                for line in proc.stdout:
+                    self.app.call_from_thread(self.write_log, escape(line.strip()))
+                    if self.out_file:
+                        captured_output.append(line)
+                    if worker.is_cancelled or self._cancelled:
+                        self._kill_process_group(proc)
+                        break
+
+                proc.wait()
+                rc = proc.returncode
+                if rc != 0 and rc != -15 and not self._cancelled:
+                    failures.append(cmd[-1])
+                    self.app.call_from_thread(
+                        self.write_log,
+                        self._log_msg("failed", f"{escape(cmd[-1])} (exit {rc})"),
+                    )
+                elif rc == -15:
                     break
 
-            self.process.wait()
-            if self.process.returncode != 0 and self.process.returncode != -15 and not self._cancelled:
-                failures.append(cmd[-1])
-                self.app.call_from_thread(
-                    self.write_log,
-                    self._log_msg("failed", f"{escape(cmd[-1])} (exit {self.process.returncode})"),
-                )
-            elif self.process.returncode == -15:
-                break
-
-            if is_batch:
+            if is_batch and bar:
                 self.app.call_from_thread(bar.update, progress=idx + 1)
 
         if self.out_file and captured_output and not self._cancelled:
@@ -483,7 +508,9 @@ class GenericCliProgressScreen(_LoggingModalScreen, ModalScreen):
         self.app.call_from_thread(self.safe_dismiss)
 
 
-class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
+class PillowProgressScreen(_LoggingModalScreen):
+    BINDINGS = [("escape", "cancel_process", "Cancel")]
+
     def __init__(
         self, input_file: str, output_file: str, action: str, dimensions=None, target_ext=None
     ):
@@ -493,6 +520,7 @@ class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
         self.action = action
         self.dimensions = dimensions
         self.target_ext = target_ext
+        self.progress_bar: ProgressBar | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
@@ -533,9 +561,15 @@ class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
                     images = []
                     try:
                         for f in files:
+                            if self._cancelled or worker.is_cancelled:
+                                break
                             with Image.open(os.path.join(expanded_in, f)) as opened_img:
                                 images.append(opened_img.convert("RGB"))
-                        images[0].save(expanded_out, save_all=True, append_images=images[1:])
+                        if not (self._cancelled or worker.is_cancelled) and images:
+                            images[0].save(expanded_out, save_all=True, append_images=images[1:])
+                            self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
+                        elif self._cancelled or worker.is_cancelled:
+                            self.app.call_from_thread(self.app.notify, "PDF Creation Cancelled", severity="warning")
                     finally:
                         for img in images:
                             try:
@@ -563,7 +597,8 @@ class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
             ]
 
             bar = self.progress_bar
-            self.app.call_from_thread(bar.update, total=len(files), progress=0)
+            if bar:
+                self.app.call_from_thread(bar.update, total=len(files), progress=0)
 
             failures = []
             for idx, f in enumerate(files):
@@ -590,7 +625,8 @@ class PillowProgressScreen(_LoggingModalScreen, ModalScreen):
                         self.write_log,
                         self._log_msg("failed", f"{escape(f)} ({e})"),
                     )
-                self.app.call_from_thread(bar.update, progress=idx + 1)
+                if bar:
+                    self.app.call_from_thread(bar.update, progress=idx + 1)
 
             if self._cancelled or worker.is_cancelled:
                 self.app.call_from_thread(

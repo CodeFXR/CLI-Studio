@@ -193,19 +193,17 @@ See `CLEANUP_ROADMAP.md` for the full list.
 
 ### Long-term (aspirational feature additions)
 
-From the original `ROADMAP.md` (June 2026). Items marked ⭐ are on the high-ROI shortlist; rest are catalogued for awareness.
+From the original `ROADMAP.md` (June 2026). Items marked [High-ROI] are on the shortlist; rest are catalogued for awareness.
 
 #### Wraps already on the high-ROI shortlist (Phase 6, post-cleanup)
-- ⭐ **Wrap `pandoc`** — new "Documents" tab. Universal use case.
-- ⭐ **Wrap `qpdf`** — PDF merge / split / encrypt.
-- ⭐ **Wrap `tesseract`** — "Extract Text from Image". Drop-in.
-- ⭐ **Wrap `mkvtoolnix` (`mkvmerge` / `mkvextract`)** — remux without re-encoding, extract subs/attachments.
-- ⭐ **Wrap `HandBrake CLI`** — "Device Presets" tab. Beats maintaining a custom CRF library.
-- ⭐ **Surface ffmpeg codec presets** — x264 `-preset`, x265 `-tune`, SVT-AV1. Currently hardcoded libx264.
-- ⭐ **Wrap `chafa` as in-TUI image preview pane** — dramatic UX upgrade for Image Tools.
-- ⭐ **HW-accel codec selection** — NVENC / VideoToolbox / VAAPI toggle. (ROADMAP item.)
-- ⭐ **EXIF metadata editor (write, not just strip)** — exiftool. (ROADMAP item.)
-- ⭐ **Burn subtitles (hardsubs)** — `subtitles=` filter. (ROADMAP item.)
+- [High-ROI] **Wrap `tesseract`** — "Extract Text from Image". Drop-in.
+- [High-ROI] **Wrap `mkvtoolnix` (`mkvmerge` / `mkvextract`)** — remux without re-encoding, extract subs/attachments.
+- [High-ROI] **Wrap `HandBrake CLI`** — "Device Presets" tab. Beats maintaining a custom CRF library.
+- [High-ROI] **Surface ffmpeg codec presets** — x264 `-preset`, x265 `-tune`, SVT-AV1. Currently hardcoded libx264.
+- [High-ROI] **Wrap `chafa` as in-TUI image preview pane** — dramatic UX upgrade for Image Tools.
+- [High-ROI] **HW-accel codec selection** — NVENC / VideoToolbox / VAAPI toggle. (ROADMAP item.)
+- [High-ROI] **EXIF metadata editor (write, not just strip)** — exiftool. (ROADMAP item.)
+- [High-ROI] **Burn subtitles (hardsubs)** — `subtitles=` filter. (ROADMAP item.)
 
 #### Aspirational (Phase 6 backlog)
 
