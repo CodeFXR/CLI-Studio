@@ -39,7 +39,10 @@ class PreviewModalScreen(ModalScreen):
     def action_close(self) -> None:
         self._cancelled = True
         self._kill_process()
-        self.dismiss()
+        try:
+            self.dismiss()
+        except Exception:
+            pass
 
     def _kill_process(self) -> None:
         proc = self.process
@@ -71,6 +74,9 @@ class PreviewModalScreen(ModalScreen):
             preexec_fn=os.setsid if hasattr(os, "setsid") else None,
         )
         self.process = proc
+        if self._cancelled:
+            self._kill_process()
+            raise RuntimeError("Preview cancelled")
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
             return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)

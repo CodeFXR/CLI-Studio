@@ -302,8 +302,13 @@ def validate_decimal(v: str, min_val: float | None = None, max_val: float | None
 
 
 def validate_quality(v: str) -> str:
-    validate_decimal(v, min_val=1, max_val=100)
-    return str(int(float(v)))
+    cleaned = str(v).strip()
+    if not re.match(r"^\d+$", cleaned):
+        raise ValueError(f"Quality '{v}' must be an integer between 1 and 100.")
+    q = int(cleaned)
+    if not (1 <= q <= 100):
+        raise ValueError(f"Quality '{v}' must be between 1 and 100.")
+    return str(q)
 
 
 def validate_remote_name(v: str) -> str:

@@ -267,7 +267,7 @@ def build_extract_mkv_attachments_flow():
         os.makedirs(expanded_out_dir, exist_ok=True)
         cmds = []
         used_names: set[str] = set()
-        for idx, att in enumerate(attachments):
+        for idx, att in enumerate(attachments, 1):
             raw_filename = att.get("filename") or f"attachment_{idx}"
             safe_name = os.path.basename(raw_filename.replace("\\", "/")).strip()
             safe_name = re.sub(r"[^\w\s.-]", "_", safe_name).strip()
@@ -283,7 +283,8 @@ def build_extract_mkv_attachments_flow():
             out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
             if os.path.commonpath([expanded_out_dir, out_file]) != expanded_out_dir:
                 out_file = os.path.join(expanded_out_dir, f"attachment_{idx}")
-            cmds.append(["mkvextract", "attachments", in_abs, f"{idx}:{out_file}"])
+            att_id = att.get("id", att.get("index", idx))
+            cmds.append(["mkvextract", "attachments", in_abs, f"{att_id}:{out_file}"])
         if not cmds:
             return None
         return GenericCliProgressScreen(cmds, "mkvextract", expanded_out_dir)

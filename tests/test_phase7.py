@@ -407,3 +407,81 @@ async def test_settings_menu_saves_values(monkeypatch, tmp_path):
     assert saved["hw_accel"] == "nvenc"
     assert saved["ffmpeg_overwrite"] is False
     assert saved["whisper_model"] == "medium"
+
+
+def test_validate_quality_strict_integer_bounds():
+    import config
+
+    assert config.validate_quality("1") == "1"
+    assert config.validate_quality("50") == "50"
+    assert config.validate_quality("100") == "100"
+
+    for invalid in ("0", "101", "-1", "abc", "50.5", ""):
+        with pytest.raises(ValueError):
+            config.validate_quality(invalid)
+
+
+def test_pillow_progress_screen_rejects_symlink_output(tmp_path):
+    import os
+    from ui.progress import PillowProgressScreen
+
+    real_file = tmp_path / "real.jpg"
+    real_file.write_text("protected content")
+    symlink_file = tmp_path / "symlink.jpg"
+    os.symlink(real_file, symlink_file)
+    input_file = tmp_path / "in.jpg"
+    input_file.write_text("input")
+
+    notified = []
+
+    class FakeApp:
+        def notify(self, msg, severity="info", timeout=5):
+            notified.append((msg, severity))
+
+        def call_from_thread(self, fn, *args, **kwargs):
+            fn(*args, **kwargs)
+
+    screen = PillowProgressScreen(str(input_file), str(symlink_file), "convert")
+    screen.app = FakeApp()
+    screen.run_pillow()
+
+    assert any("symbolic link" in msg for msg, _ in notified)
+    assert real_file.read_text() == "protected content"
+
+
+def test_preview_kill_process_escalates_to_sigkill():
+    import os
+    import signal
+    import subprocess
+    import sys
+    import textwrap
+    import time
+    from ui.preview import PreviewModalScreen
+
+    script = textwrap.dedent("""\
+    import signal, sys, time
+    def handler(*a):
+        pass
+    signal.signal(signal.SIGTERM, handler)
+    sys.stderr.write("ready\\n")
+    sys.stderr.flush()
+    time.sleep(60)
+    """)
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script],
+        preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stderr is not None
+    # Wait for child to be ready
+    proc.stderr.readline()
+
+    screen = PreviewModalScreen("/tmp/in.jpg", "image")
+    screen.process = proc
+    screen._kill_process()
+
+    deadline = time.time() + 3
+    while time.time() < deadline and proc.poll() is None:
+        time.sleep(0.05)
+
+    assert proc.returncode in (-signal.SIGKILL, -9)

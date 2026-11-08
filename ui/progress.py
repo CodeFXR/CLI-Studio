@@ -285,7 +285,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
 
             failures = []
             for idx, f in enumerate(files):
-                if self._cancelled or worker.is_cancelled:
+                if self._cancelled or (worker and worker.is_cancelled):
                     break
                 in_f = os.path.join(expanded_in, f)
                 ext = self.target_ext if self.target_ext else os.path.splitext(f)[1]
@@ -317,7 +317,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                 if bar:
                     self.app.call_from_thread(bar.update, progress=idx + 1)
 
-            if self._cancelled or worker.is_cancelled:
+            if self._cancelled or (worker and worker.is_cancelled):
                 self.app.call_from_thread(
                     self.app.notify, "Batch Processing Cancelled", severity="warning"
                 )
@@ -546,7 +546,10 @@ class PillowProgressScreen(_LoggingModalScreen):
         return backend.process_image(img, self.action, self.dimensions)
 
     def run_pillow(self):
-        worker = get_current_worker()
+        try:
+            worker = get_current_worker()
+        except Exception:
+            worker = None
         expanded_in = os.path.expanduser(self.input_file)
         expanded_out = os.path.expanduser(self.output_file)
 
@@ -572,14 +575,14 @@ class PillowProgressScreen(_LoggingModalScreen):
                     images = []
                     try:
                         for f in files:
-                            if self._cancelled or worker.is_cancelled:
+                            if self._cancelled or (worker and worker.is_cancelled):
                                 break
                             with Image.open(os.path.join(expanded_in, f)) as opened_img:
                                 images.append(opened_img.convert("RGB"))
-                        if not (self._cancelled or worker.is_cancelled) and images:
+                        if not (self._cancelled or (worker and worker.is_cancelled)) and images:
                             images[0].save(expanded_out, save_all=True, append_images=images[1:])
                             self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
-                        elif self._cancelled or worker.is_cancelled:
+                        elif self._cancelled or (worker and worker.is_cancelled):
                             self.app.call_from_thread(self.app.notify, "PDF Creation Cancelled", severity="warning")
                     finally:
                         for img in images:
@@ -613,7 +616,7 @@ class PillowProgressScreen(_LoggingModalScreen):
 
             failures = []
             for idx, f in enumerate(files):
-                if self._cancelled or worker.is_cancelled:
+                if self._cancelled or (worker and worker.is_cancelled):
                     break
                 in_f = os.path.join(expanded_in, f)
                 ext = self.target_ext if self.target_ext else os.path.splitext(f)[1]
@@ -639,7 +642,7 @@ class PillowProgressScreen(_LoggingModalScreen):
                 if bar:
                     self.app.call_from_thread(bar.update, progress=idx + 1)
 
-            if self._cancelled or worker.is_cancelled:
+            if self._cancelled or (worker and worker.is_cancelled):
                 self.app.call_from_thread(
                     self.app.notify, "Batch Processing Cancelled", severity="warning"
                 )
