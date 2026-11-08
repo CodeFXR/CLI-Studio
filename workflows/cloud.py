@@ -5,7 +5,6 @@ from config import validate_remote_name
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.screen import ModalScreen
 from textual.widgets import Label
 from textual.worker import get_current_worker
 
@@ -48,7 +47,7 @@ def build_rclone_copy_flow():
     return FilePickerScreen("Select Local File/Folder to upload:", "", {}, step2)
 
 
-class _RcloneListRemotesScreen(_LoggingModalScreen, ModalScreen):
+class _RcloneListRemotesScreen(_LoggingModalScreen):
     BINDINGS = [("escape", "dismiss", "Cancel")]
 
     def __init__(self, target: str) -> None:

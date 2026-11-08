@@ -5,7 +5,6 @@ from typing import Literal, cast
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Container
-from textual.screen import ModalScreen
 from textual.widgets import Label, ProgressBar
 from textual.worker import get_current_worker
 
@@ -22,7 +21,7 @@ def _format_subtitle_timestamp(seconds: float, *, vtt: bool = False) -> str:
     return f"{hours:02d}:{minutes:02d}:{whole_seconds:02d}{separator}{milliseconds:03d}"
 
 
-class WhisperProgressScreen(_LoggingModalScreen, ModalScreen):
+class WhisperProgressScreen(_LoggingModalScreen):
     BINDINGS = [("escape", "cancel_process", "Cancel")]
 
     def __init__(
@@ -44,6 +43,8 @@ class WhisperProgressScreen(_LoggingModalScreen, ModalScreen):
         self.compute_type = compute_type
         self.cache_dir = cache_dir
         self.cancel_requested = False
+        self.progress_bar: ProgressBar | None = None
+        self.status_label: Label | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="progress-dialog"):
@@ -52,6 +53,11 @@ class WhisperProgressScreen(_LoggingModalScreen, ModalScreen):
             yield Label(f"Model: {self.model}  Output: {escape(self.output_file)}", id="status-label")
 
     def on_mount(self) -> None:
+        try:
+            self.progress_bar = self.query_one(ProgressBar)
+            self.status_label = self.query_one("#status-label", Label)
+        except Exception:
+            pass
         self.run_worker(self.run_whisper, exclusive=True, thread=True)
 
     def action_cancel_process(self) -> None:
@@ -60,10 +66,18 @@ class WhisperProgressScreen(_LoggingModalScreen, ModalScreen):
         self.app.notify("Transcription cancelled", severity="warning")
 
     def _set_status(self, message: str) -> None:
-        self.query_one("#status-label", Label).update(message)
+        if self.status_label:
+            try:
+                self.status_label.update(message)
+            except Exception:
+                pass
 
     def _set_progress(self, *, total: float | None = None, progress: float = 0) -> None:
-        self.query_one(ProgressBar).update(total=total, progress=progress)
+        if self.progress_bar:
+            try:
+                self.progress_bar.update(total=total, progress=progress)
+            except Exception:
+                pass
 
     def _notify(
         self,
