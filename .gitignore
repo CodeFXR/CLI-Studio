@@ -30,3 +30,10 @@ dist/
 config.json
 .cli_studio_config.json
 *.tmp
+
+# Internal developer documentation and tests
+dev_docs/
+tests/
+CLI_STUDIO_AGENT.md
+SECURITY.md
+website_docs.md
