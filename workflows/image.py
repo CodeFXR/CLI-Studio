@@ -16,6 +16,31 @@ from workflows.backends import ImageMagickBackend, get_backend
 from workflows.shared import file_file_progress_flow
 from workflows.utils import IMAGE_EXTENSIONS as _BATCH_IMAGE_EXTS
 
+_DENIED_EXIF_HOMEDIRS = (
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".config",
+    ".bashrc",
+    ".profile",
+    ".local",
+    ".cli-studio",
+)
+
+
+def _is_sensitive_path(path: str) -> bool:
+    if not path or not path.strip():
+        return True
+    expanded = os.path.abspath(os.path.expanduser(path))
+    real = os.path.realpath(expanded)
+    home = os.path.realpath(os.path.expanduser("~"))
+    if real in ("/", home):
+        return True
+    return any(
+        real == os.path.join(home, d) or real.startswith(os.path.join(home, d) + "/")
+        for d in _DENIED_EXIF_HOMEDIRS
+    )
+
 
 def build_convert_image_flow():
     def step2(in_file, state):
@@ -186,16 +211,9 @@ def build_imagemagick_filter_flow():
 
 def build_exiftool_strip_flow():
     def step2(in_file, state):
-        if not in_file or not in_file.strip():
+        if not in_file or not in_file.strip() or _is_sensitive_path(in_file):
             return None
         expanded_in = os.path.abspath(os.path.expanduser(in_file))
-        real_in = os.path.realpath(expanded_in)
-        home = os.path.realpath(os.path.expanduser("~"))
-        if real_in in ("/", home) or any(
-            real_in == os.path.join(home, d) or real_in.startswith(os.path.join(home, d) + "/")
-            for d in (".ssh", ".gnupg", ".aws", ".config")
-        ):
-            return None
         cmd = ["exiftool", "-overwrite_original", "-all=", expanded_in]
         return GenericCliProgressScreen(cmd, "ExifTool", in_file)
 
@@ -304,6 +322,8 @@ _EXIF_PRESET_TAGS = [
 
 def build_set_exif_tag_flow():
     def step2(in_file, state):
+        if _is_sensitive_path(in_file):
+            return None
         state["in_file"] = in_file
         return OptionSelectScreen(
             "EXIF tag to set:", _EXIF_PRESET_TAGS + ["Custom..."], state, step3
@@ -346,14 +366,18 @@ def build_copy_exif_flow():
         input_prompt="Select SOURCE image (whose EXIF to copy):",
         second_prompt="Select TARGET image (gets source's EXIF applied):",
         tool_name="ExifTool",
-        cmd_builder=lambda s: [
-            "exiftool",
-            "-overwrite_original",
-            "-tagsFromFile",
-            os.path.abspath(os.path.expanduser(s["in_file"])),
-            "-all:all",
-            os.path.abspath(os.path.expanduser(s["second_file"])),
-        ],
+        cmd_builder=lambda s: (
+            []
+            if _is_sensitive_path(s["in_file"]) or _is_sensitive_path(s["second_file"])
+            else [
+                "exiftool",
+                "-overwrite_original",
+                "-tagsFromFile",
+                os.path.abspath(os.path.expanduser(s["in_file"])),
+                "-all:all",
+                os.path.abspath(os.path.expanduser(s["second_file"])),
+            ]
+        ),
     )
 
 
@@ -367,7 +391,7 @@ def build_rename_by_exif_date_flow():
     def step2(in_dir, state):
         expanded_in = os.path.abspath(os.path.expanduser(in_dir))
         state["in_dir"] = expanded_in
-        if not os.path.isdir(expanded_in):
+        if not os.path.isdir(expanded_in) or _is_sensitive_path(expanded_in):
             return None
         return FilePickerScreen(
             "Output folder (renamed copies; originals left in place):",
@@ -378,7 +402,7 @@ def build_rename_by_exif_date_flow():
 
     def step3(out_dir, state):
         in_dir = os.path.abspath(os.path.expanduser(state["in_dir"]))
-        if not os.path.isdir(in_dir):
+        if not os.path.isdir(in_dir) or _is_sensitive_path(in_dir) or _is_sensitive_path(out_dir):
             return None
         files = [
             f

@@ -598,17 +598,27 @@ class GenericCliProgressScreen(_LoggingModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
+        # Guard both self.target and self.out_file against pre-planted symlinks
+        candidates = []
+        if self.target:
+            candidates.append(self.target)
+            if self.tool_name.lower() == "tesseract" and not self.target.lower().endswith(".txt"):
+                candidates.append(self.target + ".txt")
         if self.out_file:
-            candidates = [self.out_file, self.out_file + ".txt"]
-            for target in candidates:
-                if os.path.islink(target):
-                    self.app.call_from_thread(
-                        self.app.notify,
-                        f"Output cannot be a symbolic link: {escape(target)}",
-                        severity="error",
-                    )
-                    self.app.call_from_thread(self.safe_dismiss)
-                    return
+            candidates.append(self.out_file)
+            if not self.out_file.lower().endswith(".txt"):
+                candidates.append(self.out_file + ".txt")
+
+        for target in candidates:
+            expanded = os.path.abspath(os.path.expanduser(target))
+            if os.path.islink(expanded) or (os.path.lexists(expanded) and not os.path.exists(expanded)):
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Target cannot be a symbolic link: {escape(expanded)}",
+                    severity="error",
+                )
+                self.app.call_from_thread(self.safe_dismiss)
+                return
 
         bar = self.progress_bar
         is_batch = len(self.cmds) > 1

@@ -90,6 +90,20 @@ def build_trim_media_flow(is_video: bool):
 
     def step4(end, state):
         state["end"] = validate_timestamp(end)
+
+        def _to_sec(ts: str) -> float:
+            p = ts.split(":")
+            if len(p) == 1:
+                return float(p[0])
+            elif len(p) == 2:
+                return float(p[0]) * 60 + float(p[1])
+            elif len(p) == 3:
+                return float(p[0]) * 3600 + float(p[1]) * 60 + float(p[2])
+            return 0.0
+
+        if _to_sec(state["end"]) <= _to_sec(state["start"]):
+            raise ValueError("End time must be greater than start time.")
+
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen("Save As (or batch dir):", f"{base}_trimmed{ext}", state, step5)
 
