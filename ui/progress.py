@@ -73,6 +73,75 @@ def _ffmpeg_overwrite_flag() -> str:
     return "-y" if overwrite else "-n"
 
 
+def _kill_process_group(proc: subprocess.Popen | None, timeout: float = 1.0) -> None:
+    """Terminate an entire process group gracefully (SIGTERM) then forcefully (SIGKILL).
+
+    Monitors the process group as a whole using os.killpg(pgid, 0), ensuring that if the
+    leader process exits before its spawned children or grandchildren, escalation to
+    SIGKILL is never skipped.
+    """
+    if not proc:
+        return
+    pgid = getattr(proc, "pid", None)
+    if pgid is None:
+        return
+
+    # Phase 1: Graceful SIGTERM
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(pgid, signal.SIGTERM)
+        else:
+            proc.terminate()
+    except (ProcessLookupError, OSError):
+        pass
+
+    # Wait grace period while monitoring the process group
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        proc.poll()
+        group_alive = False
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(pgid, 0)
+                group_alive = True
+            except (ProcessLookupError, OSError):
+                group_alive = False
+        elif proc.poll() is None:
+            group_alive = True
+
+        if not group_alive:
+            _unregister_process_group(pgid)
+            return
+        time.sleep(0.05)
+
+    # Phase 2: Forceful SIGKILL to eliminate stubborn descendants
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(pgid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (ProcessLookupError, OSError):
+        pass
+
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+    # Reaping drain loop
+    drain_deadline = time.monotonic() + 0.2
+    while time.monotonic() < drain_deadline:
+        proc.poll()
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(pgid, 0)
+            except (ProcessLookupError, OSError):
+                break
+        time.sleep(0.02)
+
+    _unregister_process_group(pgid)
+
+
 class _LoggingModalScreen(ModalScreen[Any]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -99,51 +168,8 @@ class _LoggingModalScreen(ModalScreen[Any]):
             except Exception:
                 pass
 
-    def _kill_process_group(self, proc: subprocess.Popen | None):
-        if not proc or proc.poll() is not None:
-            return
-        pgid = getattr(proc, "pid", None)
-        if pgid is None:
-            return
-
-        _unregister_process_group(pgid)
-
-        # Phase 1: Graceful SIGTERM to allow processes to flush headers
-        try:
-            if hasattr(os, "killpg"):
-                os.killpg(pgid, signal.SIGTERM)
-            else:
-                proc.terminate()
-        except (ProcessLookupError, OSError):
-            pass
-
-        # Allow grace period for clean exit
-        try:
-            proc.wait(timeout=1.0)
-        except (subprocess.TimeoutExpired, Exception):
-            pass
-
-        if proc.poll() is not None:
-            return
-
-        # Phase 2: Unconditional SIGKILL to guarantee no surviving children or grandchildren
-        try:
-            if hasattr(os, "killpg"):
-                os.killpg(pgid, signal.SIGKILL)
-            else:
-                proc.kill()
-        except (ProcessLookupError, OSError):
-            pass
-
-        try:
-            proc.kill()
-        except Exception:
-            pass
-
-        try:
-            proc.wait(timeout=0.2)
-        except Exception:
-            pass
+    def _kill_process_group(self, proc: subprocess.Popen | None, timeout: float = 1.0) -> None:
+        _kill_process_group(proc, timeout=timeout)
 
     def write_log(self, text):
         try:
@@ -200,7 +226,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
     def action_cancel_download(self):
         self._cancelled = True
         proc = self.process
-        if proc and proc.poll() is None:
+        if proc:
             threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Download Cancelled", severity="warning")
@@ -252,9 +278,6 @@ class DownloadProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
-            if self._cancelled or (worker and worker.is_cancelled):
-                self._kill_process_group(self.process)
-                return
         except FileNotFoundError:
             self.app.call_from_thread(
                 self.app.notify, "yt-dlp not found. Please install it.", severity="error"
@@ -272,6 +295,10 @@ class DownloadProgressScreen(_LoggingModalScreen):
 
         proc = self.process
         try:
+            if self._cancelled or (worker and worker.is_cancelled):
+                self._kill_process_group(proc)
+                return
+
             if proc and proc.stdout:
                 for line in proc.stdout:
                     self.app.call_from_thread(self.write_log, escape(line.strip()))
@@ -333,7 +360,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
     def action_cancel_process(self):
         self._cancelled = True
         proc = self.process
-        if proc and proc.poll() is None:
+        if proc:
             threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
@@ -478,9 +505,6 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
-            if self._cancelled or (worker and worker.is_cancelled):
-                self._kill_process_group(self.process)
-                return
             self.app.call_from_thread(
                 self.write_log, self._log_msg("executing", escape(" ".join(cmd)))
             )
@@ -499,6 +523,10 @@ class FfmpegProgressScreen(_LoggingModalScreen):
 
         proc = self.process
         try:
+            if self._cancelled or (worker and worker.is_cancelled):
+                self._kill_process_group(proc)
+                return
+
             if proc and proc.stdout:
                 for line in proc.stdout:
                     self.app.call_from_thread(self.write_log, escape(line.strip()))
@@ -555,7 +583,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
     def action_cancel_process(self):
         self._cancelled = True
         proc = self.process
-        if proc and proc.poll() is None:
+        if proc:
             threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
@@ -604,9 +632,6 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     start_new_session=True,
                 )
                 _register_process_group(self.process.pid)
-                if self._cancelled or (worker and worker.is_cancelled):
-                    self._kill_process_group(self.process)
-                    break
             except FileNotFoundError:
                 self.app.call_from_thread(
                     self.app.notify,
@@ -631,6 +656,10 @@ class GenericCliProgressScreen(_LoggingModalScreen):
 
             proc = self.process
             try:
+                if self._cancelled or (worker and worker.is_cancelled):
+                    self._kill_process_group(proc)
+                    break
+
                 if proc and proc.stdout:
                     for line in proc.stdout:
                         self.app.call_from_thread(self.write_log, escape(line.strip()))
@@ -674,7 +703,9 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     )
                 else:
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    with open(out_path, "w", encoding="utf-8") as f:
+                    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+                    fd = os.open(out_path, flags, 0o644)
+                    with open(fd, "w", encoding="utf-8") as f:
                         f.writelines(captured_output)
             except Exception as e:
                 self.app.call_from_thread(

@@ -158,10 +158,9 @@ class WhisperProgressScreen(_LoggingModalScreen):
                 prefix=".cli_studio_subtitles.",
                 suffix=".tmp",
             )
-            os.close(fd)
             vtt = expanded_out.lower().endswith(".vtt")
             count = 0
-            with open(temp_path, "w", encoding="utf-8") as handle:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 if vtt:
                     handle.write("WEBVTT\n\n")
                 for segment in segments:

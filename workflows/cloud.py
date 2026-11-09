@@ -116,7 +116,9 @@ class _RcloneListRemotesScreen(_LoggingModalScreen):
             return
 
         try:
-            with open(self.target, "w", encoding="utf-8") as handle:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(self.target, flags, 0o644)
+            with open(fd, "w", encoding="utf-8") as handle:
                 handle.write(result.stdout)
         except OSError as exc:
             self.app.call_from_thread(
