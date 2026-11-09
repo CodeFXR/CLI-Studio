@@ -38,8 +38,12 @@ class _BaseInputModal(ModalScreen):
             return
         try:
             next_screen = self.next_step_func(val, self.state)
-        except ValueError:
-            self.app.notify("Invalid input. Check the format and try again.", severity="error")
+        except ValueError as exc:
+            msg = str(exc).strip()
+            if not msg or "invalid literal" in msg or "could not convert" in msg:
+                self.app.notify("Invalid input. Check the format and try again.", severity="error")
+            else:
+                self.app.notify(f"Invalid input: {msg}", severity="error")
             return
         except FileNotFoundError as exc:
             name = exc.filename or "the file"
@@ -51,6 +55,10 @@ class _BaseInputModal(ModalScreen):
         except Exception as exc:
             self.app.notify("Unexpected error; press '?' for help.", severity="error")
             logger.exception("Wizard step %s raised: %s", self.prompt, exc)
+            return
+        if next_screen is None:
+            self.app.notify("Operation cancelled or path rejected.", severity="warning")
+            self.dismiss()
             return
         self.dismiss()
         if next_screen:

@@ -46,7 +46,7 @@ PYTHON_PACKAGES=(
     "textual>=0.85,<10.0"
     "textual-image>=0.10,<2.0"
     "Pillow>=10.0,<15.0"
-    "yt-dlp>=2024.1.1"
+    "yt-dlp>=2024.1.1,<2028.0.0"
     "natsort>=8.0,<10.0"
 )
 

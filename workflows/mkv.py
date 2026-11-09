@@ -44,11 +44,46 @@ def _probe_subtitle_tracks(mkv_path: str) -> list[dict]:
 
 
 def _probe_attachments(mkv_path: str) -> list[dict]:
-    """Use ffprobe to enumerate attachments in an MKV (fonts, images, etc.).
+    """Enumerate attachments in an MKV (fonts, images, etc.).
 
-    Returns a list of dicts: {"index": int, "filename": str, "mimetype": str, "size": int}.
-    Returns an empty list on any error.
+    Queries mkvmerge -J to retrieve the exact native Matroska attachment IDs
+    used by mkvextract. If mkvmerge is unavailable or reports no attachments,
+    falls back to ffprobe stream enumeration with 1-based sequential attachment indexing.
+    Returns a list of dicts: {"index": int, "filename": str, "mimetype": str, "size": int}
+    (with optional "id" if reported by mkvmerge).
     """
+    cmd_mkv = ["mkvmerge", "-J", mkv_path]
+    try:
+        res = subprocess.run(cmd_mkv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        if res.returncode == 0:
+            data = json.loads(res.stdout)
+            raw_atts = data.get("attachments", [])
+            if raw_atts:
+                out = []
+                for idx, att in enumerate(raw_atts, 1):
+                    fn = att.get("filename") or att.get("file_name") or f"attachment_{idx}"
+                    mt = att.get("mimetype") or att.get("content_type", "")
+                    sz = int(att.get("size", 0) or 0)
+                    index_val = att.get("index")
+                    id_val = att.get("id")
+                    item: dict = {
+                        "filename": fn,
+                        "mimetype": mt,
+                        "size": sz,
+                    }
+                    if id_val is not None:
+                        item["id"] = int(id_val)
+                        item["index"] = int(index_val if index_val is not None else id_val)
+                    elif index_val is not None:
+                        item["index"] = int(index_val)
+                    else:
+                        item["id"] = idx
+                        item["index"] = idx
+                    out.append(item)
+                return out
+    except Exception:
+        pass
+
     cmd = [
         "ffprobe",
         "-v",
@@ -70,10 +105,11 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         return []
 
     attachments: list[dict] = []
+    att_idx = 1
     for stream in data.get("streams", []):
         if stream.get("codec_type") == "attachment":
             tags = stream.get("tags", {})
-            filename = tags.get("filename") or f"attachment_{stream.get('index', 0)}"
+            filename = tags.get("filename") or f"attachment_{att_idx}"
             mimetype = tags.get("mimetype") or ""
             try:
                 size = int(tags.get("NUMBER_OF_BYTES", 0) or 0)
@@ -81,17 +117,22 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
                 size = 0
             attachments.append(
                 {
-                    "index": stream.get("index", 0),
+                    "id": att_idx,
+                    "index": att_idx,
                     "filename": filename,
                     "mimetype": mimetype,
                     "size": size,
                 }
             )
+            att_idx += 1
 
     if not attachments and "attachments" in data:
-        for att in data.get("attachments", []):
+        for idx, att in enumerate(data.get("attachments", []), 1):
             if isinstance(att, dict):
-                attachments.append(att)
+                att_copy = dict(att)
+                att_copy.setdefault("id", idx)
+                att_copy.setdefault("index", idx)
+                attachments.append(att_copy)
 
     return attachments
 

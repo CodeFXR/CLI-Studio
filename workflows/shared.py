@@ -1,4 +1,5 @@
 import os
+import re
 from typing import cast
 
 from config import _load_full_config, validate_timestamp
@@ -8,21 +9,31 @@ from workflows.backends import GalleryDlBackend, get_backend
 from workflows.utils import abspath, get_media_duration
 
 
-_ALLOWED_BROWSERS = {"chrome", "chromium", "firefox", "brave", "edge", "safari", "opera", "vivaldi", "whale"}
+_ALLOWED_BROWSERS = {"brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"}
+_COOKIE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_\-+]+(:[a-zA-Z0-9_\-+.]+)?(::[a-zA-Z0-9_\-+.]+)?\Z")
 
 
 def _safe_cookies(v: str) -> str:
     if not v:
         return ""
-    base = v.split(":")[0].strip().lower()
-    return v if base in _ALLOWED_BROWSERS else ""
+    cleaned = v.strip()
+    if not _COOKIE_TOKEN_RE.match(cleaned):
+        return ""
+    base = cleaned.split(":")[0].split("+")[0].strip().lower()
+    return cleaned if base in _ALLOWED_BROWSERS else ""
+
+
+def _safe_remote_components(v: str) -> str:
+    if not v:
+        return ""
+    cleaned = v.strip()
+    return cleaned if cleaned in ("ejs:github", "ejs:npm") else ""
 
 
 def build_download_flow(is_audio: bool, is_playlist: bool = False):
     config = _load_full_config()
     cookies = _safe_cookies(config.get("yt_dlp_cookies", ""))
-    raw_rc = config.get("yt_dlp_remote_components", "")
-    remote_components = raw_rc if raw_rc in ("ejs:github", "ejs:npm") or not raw_rc else ""
+    remote_components = _safe_remote_components(config.get("yt_dlp_remote_components", ""))
 
     def step2(url, state):
         state["url"] = url

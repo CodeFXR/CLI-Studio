@@ -322,18 +322,54 @@ def validate_quality(v: str) -> str:
     return str(q)
 
 
-_TIMESTAMP_RE = re.compile(r"^([0-9]{1,2}:)?([0-9]{1,2}:)?[0-9]{1,2}(\.[0-9]+)?\Z")
-
-
 def validate_timestamp(v: str) -> str:
+    """Validate a media timestamp in pure seconds or HH:MM:SS / MM:SS format.
+
+    Enforces semantic boundaries:
+    - Pure seconds: 0 or positive float/int of arbitrary magnitude (e.g. "90", "3600").
+    - MM:SS: MM >= 0, 0 <= SS < 60.
+    - HH:MM:SS: HH >= 0, 0 <= MM < 60, 0 <= SS < 60.
+    """
     if not isinstance(v, str) or "\n" in v or "\r" in v:
         raise ValueError(f"Invalid timestamp '{v}'.")
     cleaned = v.strip()
-    if not _TIMESTAMP_RE.match(cleaned):
-        raise ValueError(
-            f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
-        )
-    return cleaned
+    if not cleaned:
+        raise ValueError("Timestamp cannot be empty.")
+
+    # Pure seconds form (e.g. "90", "3600", "7200.5")
+    if re.match(r"^[0-9]+(\.[0-9]+)?\Z", cleaned):
+        return cleaned
+
+    # Colon notation (MM:SS or HH:MM:SS)
+    parts = cleaned.split(":")
+    if len(parts) == 2:
+        m_str, s_str = parts
+        if not (re.match(r"^[0-9]+\Z", m_str) and re.match(r"^[0-9]{1,2}(\.[0-9]+)?\Z", s_str)):
+            raise ValueError(
+                f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+            )
+        if float(s_str) >= 60.0:
+            raise ValueError(f"Seconds value '{s_str}' in timestamp '{v}' must be less than 60.")
+        return cleaned
+    elif len(parts) == 3:
+        h_str, m_str, s_str = parts
+        if not (
+            re.match(r"^[0-9]+\Z", h_str)
+            and re.match(r"^[0-9]{1,2}\Z", m_str)
+            and re.match(r"^[0-9]{1,2}(\.[0-9]+)?\Z", s_str)
+        ):
+            raise ValueError(
+                f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+            )
+        if int(m_str) >= 60:
+            raise ValueError(f"Minutes value '{m_str}' in timestamp '{v}' must be less than 60.")
+        if float(s_str) >= 60.0:
+            raise ValueError(f"Seconds value '{s_str}' in timestamp '{v}' must be less than 60.")
+        return cleaned
+
+    raise ValueError(
+        f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+    )
 
 
 def validate_remote_name(v: str) -> str:
@@ -379,15 +415,18 @@ def validate_cache_dir(v: str) -> str:
             f"Cache directory '{v}' cannot be the user home directory directly. "
             "Use a dedicated subdirectory such as ~/.cache/cli-studio."
         )
-    sensitive_home_dirs = {
-        os.path.join(home_dir, name)
-        for name in (".ssh", ".gnupg", ".aws", ".config", ".bashrc", ".profile", ".local", ".cli-studio")
-    }
-    for sensitive in sensitive_home_dirs:
-        if expanded == sensitive or expanded.startswith(sensitive + "/"):
+    if expanded in (os.path.realpath("/tmp"), os.path.realpath("/var/tmp")):
+        raise ValueError(
+            f"Cache directory '{v}' cannot be /tmp or /var/tmp directly. "
+            "Use a dedicated subdirectory such as /tmp/cli-studio."
+        )
+    rel_home = os.path.relpath(expanded, home_dir)
+    if not rel_home.startswith(".."):
+        first_segment = rel_home.split(os.sep)[0]
+        if first_segment.startswith(".") and first_segment != ".cache":
             raise ValueError(
                 f"Cache directory '{v}' resolves to sensitive location '{expanded}'. "
-                "Use a non-sensitive cache path."
+                "Use a non-sensitive cache path such as ~/.cache/cli-studio."
             )
     for prefix in _BLOCKED_CACHE_PREFIXES:
         resolved_prefix = os.path.realpath(prefix)

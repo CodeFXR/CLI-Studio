@@ -21,7 +21,7 @@ from textual.worker import get_current_worker
 from workflows.backends import PillowBackend, YtDlpBackend, get_backend
 from workflows.utils import unique_path
 
-Image.MAX_IMAGE_PIXELS = 100_000_000
+Image.MAX_IMAGE_PIXELS = 50_000_000
 
 _ACTIVE_PROCESS_GROUPS: set[int] = set()
 _PG_LOCK = threading.Lock()
@@ -45,15 +45,48 @@ def cleanup_active_process_groups() -> None:
         active = list(_ACTIVE_PROCESS_GROUPS)
     if not active:
         return
+
+    alive = []
     for pgid in active:
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(pgid, 0)
+                alive.append(pgid)
+            except (ProcessLookupError, OSError):
+                with _PG_LOCK:
+                    _ACTIVE_PROCESS_GROUPS.discard(pgid)
+        else:
+            alive.append(pgid)
+
+    if not alive:
+        return
+
+    for pgid in alive:
         try:
             if hasattr(os, "killpg"):
                 os.killpg(pgid, signal.SIGTERM)
         except (ProcessLookupError, OSError):
             pass
-    time.sleep(0.5)
+
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        survivors = []
+        for pgid in alive:
+            if hasattr(os, "killpg"):
+                try:
+                    os.killpg(pgid, 0)
+                    survivors.append(pgid)
+                except (ProcessLookupError, OSError):
+                    pass
+            else:
+                survivors.append(pgid)
+        alive = survivors
+        if not alive:
+            break
+        time.sleep(0.05)
+
     with _PG_LOCK:
-        for pgid in active:
+        for pgid in alive:
             try:
                 if hasattr(os, "killpg"):
                     os.killpg(pgid, signal.SIGKILL)
@@ -146,8 +179,32 @@ class _LoggingModalScreen(ModalScreen[Any]):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._dismissed = False
-        self._cancelled = False
+        self._cancel_event = threading.Event()
+        self._kill_dispatched = False
+        self._kill_lock = threading.Lock()
         self._app_override = None
+
+    @property
+    def _cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    @_cancelled.setter
+    def _cancelled(self, val: bool) -> None:
+        if val:
+            self._cancel_event.set()
+        else:
+            self._cancel_event.clear()
+
+    @property
+    def is_cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    @is_cancelled.setter
+    def is_cancelled(self, val: bool) -> None:
+        if val:
+            self._cancel_event.set()
+        else:
+            self._cancel_event.clear()
 
     @property
     def app(self) -> Any:
@@ -167,6 +224,20 @@ class _LoggingModalScreen(ModalScreen[Any]):
                 self.dismiss()
             except Exception:
                 pass
+
+    def _dispatch_cancel(self, proc: subprocess.Popen | None) -> None:
+        self._cancel_event.set()
+        with self._kill_lock:
+            if not self._kill_dispatched:
+                self._kill_dispatched = True
+                if proc:
+                    threading.Thread(
+                        target=_kill_process_group,
+                        args=(proc,),
+                        daemon=True,
+                        name="process-killer",
+                    ).start()
+        self.safe_dismiss()
 
     def _kill_process_group(self, proc: subprocess.Popen | None, timeout: float = 1.0) -> None:
         _kill_process_group(proc, timeout=timeout)
@@ -224,11 +295,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_ytdlp, exclusive=True, thread=True)
 
     def action_cancel_download(self):
-        self._cancelled = True
-        proc = self.process
-        if proc:
-            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
-        self.safe_dismiss()
+        self._dispatch_cancel(self.process)
         self.app.notify("Download Cancelled", severity="warning")
 
     def run_ytdlp(self):
@@ -358,11 +425,7 @@ class FfmpegProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_ffmpeg, exclusive=True, thread=True)
 
     def action_cancel_process(self):
-        self._cancelled = True
-        proc = self.process
-        if proc:
-            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
-        self.safe_dismiss()
+        self._dispatch_cancel(self.process)
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_ffmpeg(self):
@@ -581,11 +644,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_cmd, exclusive=True, thread=True)
 
     def action_cancel_process(self):
-        self._cancelled = True
-        proc = self.process
-        if proc:
-            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
-        self.safe_dismiss()
+        self._dispatch_cancel(self.process)
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_cmd(self):
@@ -800,24 +859,41 @@ class PillowProgressScreen(_LoggingModalScreen):
                         )
                         self.app.call_from_thread(self.safe_dismiss)
                         return
-                    images = []
-                    try:
-                        for f in files:
+                    first_path = os.path.join(expanded_in, files[0])
+                    with Image.open(first_path) as first_raw:
+                        if first_raw.width * first_raw.height > 50_000_000:
+                            raise Image.DecompressionBombError(
+                                f"Image '{files[0]}' exceeds 50 MP maximum safe threshold"
+                            )
+                        first_img = first_raw.convert("RGB")
+
+                    def _stream_images(img_files):
+                        for f in img_files:
                             if self._cancelled or (worker and worker.is_cancelled):
                                 break
-                            with Image.open(os.path.join(expanded_in, f)) as opened_img:
-                                images.append(opened_img.convert("RGB"))
-                        if not (self._cancelled or (worker and worker.is_cancelled)) and images:
-                            images[0].save(expanded_out, save_all=True, append_images=images[1:])
+                            p = os.path.join(expanded_in, f)
+                            with Image.open(p) as raw:
+                                if raw.width * raw.height > 50_000_000:
+                                    raise Image.DecompressionBombError(
+                                        f"Image '{f}' exceeds 50 MP maximum safe threshold"
+                                    )
+                                yield raw.convert("RGB")
+
+                    try:
+                        if len(files) == 1:
+                            first_img.save(expanded_out)
+                        else:
+                            first_img.save(
+                                expanded_out,
+                                save_all=True,
+                                append_images=_stream_images(files[1:]),
+                            )
+                        if not (self._cancelled or (worker and worker.is_cancelled)):
                             self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
-                        elif self._cancelled or (worker and worker.is_cancelled):
+                        else:
                             self.app.call_from_thread(self.app.notify, "PDF Creation Cancelled", severity="warning")
                     finally:
-                        for img in images:
-                            try:
-                                img.close()
-                            except Exception:
-                                pass
+                        first_img.close()
                 else:
                     with Image.open(expanded_in) as img:
                         img.convert("RGB").save(expanded_out)

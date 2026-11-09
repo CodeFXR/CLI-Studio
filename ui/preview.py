@@ -25,7 +25,20 @@ class PreviewModalScreen(ModalScreen):
         self.input_path = input_path
         self.preview_type = preview_type
         self.process: subprocess.Popen | None = None
-        self._cancelled = False
+        self._cancel_event = threading.Event()
+        self._kill_dispatched = False
+        self._kill_lock = threading.Lock()
+
+    @property
+    def _cancelled(self) -> bool:
+        return self._cancel_event.is_set()
+
+    @_cancelled.setter
+    def _cancelled(self, val: bool) -> None:
+        if val:
+            self._cancel_event.set()
+        else:
+            self._cancel_event.clear()
 
     def compose(self) -> ComposeResult:
         title = "Image Preview" if self.preview_type == "image" else "Audio Waveform Preview"
@@ -38,15 +51,18 @@ class PreviewModalScreen(ModalScreen):
         self.run_worker(self.run_preview, exclusive=True, thread=True)
 
     def action_close(self) -> None:
-        self._cancelled = True
+        self._cancel_event.set()
         proc = self.process
-        if proc:
-            threading.Thread(
-                target=_kill_process_group,
-                args=(proc,),
-                daemon=True,
-                name="preview-killer",
-            ).start()
+        with self._kill_lock:
+            if not self._kill_dispatched:
+                self._kill_dispatched = True
+                if proc:
+                    threading.Thread(
+                        target=_kill_process_group,
+                        args=(proc,),
+                        daemon=True,
+                        name="preview-killer",
+                    ).start()
         try:
             self.dismiss()
         except Exception:
