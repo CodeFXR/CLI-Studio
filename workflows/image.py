@@ -124,7 +124,7 @@ def build_remove_bg_color_flow():
         )
 
     def step4(fuzz, state):
-        state["fuzz"] = validate_decimal(fuzz.replace("%", ""))
+        state["fuzz"] = validate_decimal(fuzz.replace("%", "").strip(), min_val=0.0, max_val=100.0)
         base = os.path.splitext(state["in_file"])[0]
         return FilePickerScreen(
             "Save As (MUST be .png/.webp for transparency):", f"{base}_nobg.png", state, step5
@@ -250,7 +250,7 @@ def build_add_border_flow():
         return TextInputScreen("Border Size (px):", "10", "10", state, step3)
 
     def step3(size, state):
-        state["size"] = validate_decimal(size, min_val=0.0, max_val=4096.0)
+        state["size"] = str(int(float(validate_decimal(size, min_val=0.0, max_val=4096.0))))
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen("Save As (or dir):", f"{base}_border{ext}", state, step4)
 

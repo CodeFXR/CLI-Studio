@@ -204,7 +204,7 @@ class CommandSuggester(Suggester):
 
 class CliStudioApp(App):
     TITLE = "CLI-Studio"
-    VERSION = "v1.1.0"
+    VERSION = "v1.2.0"
     CSS = LAYOUT_CSS + THEMES_CSS
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
@@ -710,6 +710,14 @@ class CliStudioApp(App):
             return
         _, fail = log_palette_colors(self.active_theme)
         self._update_output(f"[bold {fail}]Unknown command:[/bold {fail}] {escape(cmd)}", bell=True)
+
+    def on_unmount(self) -> None:
+        try:
+            from ui.progress import cleanup_active_process_groups
+
+            cleanup_active_process_groups()
+        except Exception:
+            pass
 
 
 def main() -> None:

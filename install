@@ -46,9 +46,9 @@ BIN_DIR="$HOME/.local/bin"
 EXECUTABLE="$BIN_DIR/cli-studio"
 
 PYTHON_PACKAGES=(
-    "textual>=0.85,<7.0"
+    "textual>=0.85,<10.0"
     "textual-image>=0.10,<2.0"
-    "Pillow>=10.0,<12.0"
+    "Pillow>=10.0,<15.0"
     "yt-dlp>=2024.1.1"
     "natsort>=8.0,<10.0"
 )
@@ -116,7 +116,7 @@ install_dependencies() {
                     ;;
                 arch|manjaro|endeavouros)
                     echo -e "  ${YELLOW}Running: pacman -S ffmpeg imagemagick perl-image-exiftool tesseract mkvtoolnix zbar perl-rename rclone handbrake-cli chafa python git${RESET}"
-                    sudo pacman -Syu --noconfirm ffmpeg imagemagick perl-image-exiftool tesseract mkvtoolnix zbar perl-rename rclone handbrake-cli chafa python git
+                    sudo pacman -S --needed --noconfirm ffmpeg imagemagick perl-image-exiftool tesseract mkvtoolnix zbar perl-rename rclone handbrake-cli chafa python git
                     ;;
                 *)
                     echo -e "  ${YELLOW}Unsupported package manager. Please ensure ffmpeg, imagemagick, exiftool, tesseract, mkvtoolnix, zbar, rename, rclone, handbrake-cli, chafa, and python3 are installed manually.${RESET}"

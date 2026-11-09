@@ -31,7 +31,7 @@ def unique_path(directory: str, stem: str, ext: str) -> str:
         ext = "." + ext
     candidate = os.path.join(directory, stem + ext)
     counter = 1
-    while os.path.exists(candidate):
+    while os.path.lexists(candidate):
         counter += 1
         candidate = os.path.join(directory, f"{stem}_{counter}{ext}")
     return candidate
@@ -82,7 +82,7 @@ def probe_first_subtitle_codec(video_path: str) -> str:
         "-v",
         "error",
         "-select_streams",
-        "s",
+        "s:0",
         "-show_entries",
         "stream=codec_name",
         "-of",
@@ -101,7 +101,8 @@ def probe_first_subtitle_codec(video_path: str) -> str:
         return ""
     if res.returncode != 0:
         return ""
-    return res.stdout.strip().lower()
+    lines = res.stdout.strip().splitlines()
+    return lines[0].strip().lower() if lines else ""
 
 
 def subtitle_ext_for_codec(codec: str) -> str:

@@ -47,19 +47,36 @@ class PreviewModalScreen(ModalScreen):
     def _kill_process(self) -> None:
         proc = self.process
         if proc:
-            try:
-                if hasattr(os, "killpg"):
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGTERM)
-                    try:
-                        proc.wait(timeout=0.2)
-                    except (subprocess.TimeoutExpired, Exception):
+            pgid = getattr(proc, "pid", None)
+            if pgid is not None:
+                try:
+                    if hasattr(os, "killpg"):
+                        os.killpg(pgid, signal.SIGTERM)
+                    else:
+                        proc.terminate()
+                except (ProcessLookupError, OSError):
+                    pass
+
+                try:
+                    proc.wait(timeout=1.5)
+                except (subprocess.TimeoutExpired, Exception):
+                    pass
+
+                try:
+                    if hasattr(os, "killpg"):
                         os.killpg(pgid, signal.SIGKILL)
-                else:
-                    proc.terminate()
-            except (ProcessLookupError, OSError):
+                    else:
+                        proc.kill()
+                except (ProcessLookupError, OSError):
+                    pass
+
                 try:
                     proc.kill()
+                except Exception:
+                    pass
+
+                try:
+                    proc.wait(timeout=0.5)
                 except Exception:
                     pass
 
@@ -68,10 +85,13 @@ class PreviewModalScreen(ModalScreen):
             raise RuntimeError("Preview cancelled")
         proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            preexec_fn=os.setsid if hasattr(os, "setsid") else None,
+            encoding="utf-8",
+            errors="replace",
+            start_new_session=True,
         )
         self.process = proc
         if self._cancelled:
@@ -90,13 +110,22 @@ class PreviewModalScreen(ModalScreen):
             self.process = None
 
     def _show_content(self, output: str, status: str) -> None:
-        self.query_one("#preview-content", Static).update(Text.from_ansi(output))
-        self.query_one("#preview-help", Label).update(escape(f"{status}\nEsc to close"))
+        try:
+            self.query_one("#preview-content", Static).update(Text.from_ansi(output))
+            self.query_one("#preview-help", Label).update(escape(f"{status}\nEsc to close"))
+        except Exception:
+            pass
 
     def _show_error(self, message: str) -> None:
-        self.query_one("#preview-content", Static).update(escape(message))
-        self.query_one("#preview-help", Label).update("Esc to close")
-        self.app.notify(escape(message), severity="warning")
+        try:
+            self.query_one("#preview-content", Static).update(escape(message))
+            self.query_one("#preview-help", Label).update("Esc to close")
+        except Exception:
+            pass
+        try:
+            self.app.notify(escape(message), severity="warning")
+        except Exception:
+            pass
 
     def _render_preview(self, image_path: str) -> tuple[str, str]:
         backend = cast(ChafaBackend, get_backend("chafa"))

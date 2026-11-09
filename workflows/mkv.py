@@ -99,8 +99,9 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
 def build_remux_to_mkv_flow():
     def step2(in_file, state):
         state["in_file"] = in_file
-        base, _ = os.path.splitext(in_file)
-        return FilePickerScreen("Save MKV As:", f"{base}.mkv", state, step3)
+        base, ext = os.path.splitext(in_file)
+        default_out = f"{base}_remux.mkv" if ext.lower() == ".mkv" else f"{base}.mkv"
+        return FilePickerScreen("Save MKV As:", default_out, state, step3)
 
     def step3(out_file, state):
         cmd = ["mkvmerge", "-o", abspath(out_file), abspath(state["in_file"])]
@@ -191,13 +192,20 @@ def build_extract_mkv_subs_flow():
             raw_lang = t.get("language") or ""
             safe_lang = re.sub(r"[^\w-]", "", raw_lang)
             suffix = f"_{safe_lang}" if safe_lang else f"_{t_id}"
-            candidate_name = f"{base}{suffix}.{ext}"
-            if candidate_name.lower() in used_sub_names:
-                candidate_name = f"{base}_{t_id}{suffix}.{ext}"
-            used_sub_names.add(candidate_name.lower())
+            raw_sub_name = f"{base}{suffix}.{ext}"
+            out_filename = os.path.basename(raw_sub_name).lstrip(".")
+            if not out_filename:
+                out_filename = f"sub_{t_id}.{ext}"
+            stem, sub_ext = os.path.splitext(out_filename)
+            candidate = out_filename
+            counter = 1
+            out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
+            while os.path.lexists(out_file) or candidate.lower() in used_sub_names:
+                candidate = f"{stem}_{counter}{sub_ext}"
+                counter += 1
+                out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
+            used_sub_names.add(candidate.lower())
 
-            out_filename = os.path.basename(candidate_name)
-            out_file = os.path.normpath(os.path.join(expanded_out_dir, out_filename))
             if os.path.commonpath([expanded_out_dir, out_file]) != expanded_out_dir:
                 out_file = os.path.join(expanded_out_dir, f"sub_{t_id}.{ext}")
             cmds.append(["mkvextract", "tracks", in_abs, f"{t_id}:{out_file}"])
@@ -271,16 +279,19 @@ def build_extract_mkv_attachments_flow():
             raw_filename = att.get("filename") or f"attachment_{idx}"
             safe_name = os.path.basename(raw_filename.replace("\\", "/")).strip()
             safe_name = re.sub(r"[^\w\s.-]", "_", safe_name).strip()
+            # Strip leading dots to prevent planting hidden files (e.g. .bashrc, .profile)
+            safe_name = safe_name.lstrip(".")
             if not safe_name or safe_name in (".", ".."):
                 safe_name = f"attachment_{idx}"
             stem, ext = os.path.splitext(safe_name)
             candidate = safe_name
             counter = 1
-            while candidate.lower() in used_names:
+            out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
+            while os.path.lexists(out_file) or candidate.lower() in used_names:
                 candidate = f"{stem}_{counter}{ext}"
                 counter += 1
+                out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
             used_names.add(candidate.lower())
-            out_file = os.path.normpath(os.path.join(expanded_out_dir, candidate))
             if os.path.commonpath([expanded_out_dir, out_file]) != expanded_out_dir:
                 out_file = os.path.join(expanded_out_dir, f"attachment_{idx}")
             att_id = att.get("id", att.get("index", idx))

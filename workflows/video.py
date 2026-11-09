@@ -226,7 +226,7 @@ def build_extract_frames_flow():
         )
 
     def step3(fps, state):
-        state["fps"] = validate_decimal(fps)
+        state["fps"] = validate_decimal(fps, min_val=0.001, max_val=1000.0)
         base = os.path.splitext(state["in_file"])[0]
         return FilePickerScreen("Output Pattern:", f"{base}_%03d.png", state, step4)
 
@@ -361,7 +361,7 @@ def build_fade_video_flow():
         param_placeholder="2",
         param_default="2",
         param_key="dur",
-        param_validator=validate_decimal,
+        param_validator=lambda v: validate_decimal(v, min_val=0.1, max_val=86400.0),
     )
 
 

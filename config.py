@@ -251,29 +251,29 @@ def _save_config(config: dict) -> None:
         raise
 
 
-_RESOLUTION_RE = re.compile(r"^\d+:-?\d+$")
-_DIMENSIONS_RE = re.compile(r"^\d+x\d+$")
-_COORDS_RE = re.compile(r"^\d+,\d+,\d+,\d+$")
-_DECIMAL_RE = re.compile(r"^\d+(\.\d+)?$")
-_REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-_EXIF_TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-:]*$")
+_RESOLUTION_RE = re.compile(r"^[0-9]+:-?[0-9]+\Z")
+_DIMENSIONS_RE = re.compile(r"^[0-9]+x[0-9]+\Z")
+_COORDS_RE = re.compile(r"^[0-9]+,[0-9]+,[0-9]+,[0-9]+\Z")
+_DECIMAL_RE = re.compile(r"^[0-9]+(\.[0-9]+)?\Z")
+_REMOTE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
+_EXIF_TAG_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-:]*\Z")
 _BLOCKED_CACHE_PREFIXES = ("/etc", "/usr", "/sys", "/proc", "/boot", "/var/lib", "/bin", "/sbin")
 
 
 def validate_resolution(v: str) -> str:
-    if not _RESOLUTION_RE.match(v):
-        raise ValueError(f"Invalid resolution '{v}'. Use W:H (e.g. 1280:720 or 1920:-1).")
+    if not isinstance(v, str) or not _RESOLUTION_RE.match(v):
+        raise ValueError(f"Invalid resolution '{v}'. Use W:H (e.g. 1280:720 or 1920:-2).")
     w_str, h_str = v.split(":")
     w, h = int(w_str), int(h_str)
-    if w <= 0 or (h <= 0 and h != -1) or w > 16384 or h > 16384:
+    if w <= 0 or (h <= 0 and h not in (-1, -2)) or w > 16384 or h > 16384:
         raise ValueError(
-            f"Resolution '{v}' is out of bounds. Width must be 1-16384 and height must be -1 or 1-16384."
+            f"Resolution '{v}' is out of bounds. Width must be 1-16384 and height must be -1, -2, or 1-16384."
         )
     return v
 
 
 def validate_dimensions(v: str) -> tuple[int, int]:
-    if not _DIMENSIONS_RE.match(v.lower()):
+    if not isinstance(v, str) or not _DIMENSIONS_RE.match(v.lower()):
         raise ValueError(f"Invalid dimensions '{v}'. Use WxH (e.g. 1920x1080).")
     w, h = map(int, v.lower().split("x"))
     if w <= 0 or h <= 0 or w > 16384 or h > 16384:
@@ -284,17 +284,23 @@ def validate_dimensions(v: str) -> tuple[int, int]:
 
 
 def validate_coords(v: str) -> tuple[int, int, int, int]:
+    if not isinstance(v, str):
+        raise ValueError("Coordinates must be a string.")
     cleaned = v.replace(" ", "")
     if not _COORDS_RE.match(cleaned):
         raise ValueError(
             f"Invalid coordinates '{v}'. Use Left,Top,Right,Bottom (e.g. 0,0,500,500)."
         )
     left, top, right, bottom = map(int, cleaned.split(","))
+    if not (0 <= left < right <= 16384 and 0 <= top < bottom <= 16384):
+        raise ValueError(
+            f"Coordinates '{v}' out of bounds or inverted. Must satisfy 0 <= left < right <= 16384 and 0 <= top < bottom <= 16384."
+        )
     return left, top, right, bottom
 
 
 def validate_decimal(v: str, min_val: float | None = None, max_val: float | None = None) -> str:
-    if not _DECIMAL_RE.match(v):
+    if not isinstance(v, str) or not _DECIMAL_RE.match(v):
         raise ValueError(
             f"Invalid number '{v}'. Use digits with optional decimal (e.g. 2.0 or 30)."
         )
@@ -308,11 +314,12 @@ def validate_decimal(v: str, min_val: float | None = None, max_val: float | None
 
 def validate_quality(v: str) -> str:
     cleaned = str(v).strip()
-    if not re.match(r"^\d+$", cleaned):
+    if not re.match(r"^[0-9]+\Z", cleaned):
         raise ValueError(f"Quality '{v}' must be an integer between 1 and 100.")
     q = int(cleaned)
     if not (1 <= q <= 100):
         raise ValueError(f"Quality '{v}' must be between 1 and 100.")
+    return str(q)
     return str(q)
 
 

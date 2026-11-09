@@ -81,7 +81,31 @@ The following issues identified during the adversarial audits have been fully re
 23. **Unified Directory Architecture & Path Consolidation (`install`, `config.py`, `update.sh`)**:
     - Consolidated application source, virtual environments, preferences (`config.json`), and plugins under a single clean root directory `~/.cli-studio/`.
     - Added `/dev/tty` redirection fallback in `install` to preserve interactive prompts under piped `curl | bash` execution.
-    - Upgraded and released production version `v1.1.0` on GitHub.
+24. **Unconditional Process Group SIGKILL Escalation & Global Orphan Reaper (`ui/progress.py`, `ui/preview.py`, `cli_studio.py`)**:
+    - Replaced group leader-dependent SIGKILL with unconditional `os.killpg(pgid, signal.SIGKILL)` after a 1.5s graceful flush window, guaranteeing zero surviving child/grandchild processes.
+    - Added global `_ACTIVE_PROCESS_GROUPS` tracking with `atexit` and `CliStudioApp.on_unmount` cleanup so closing the app or terminal cleanly reaps all subprocesses.
+    - Standardized `ui/preview.py` on `start_new_session=True`.
+25. **Terminal Stdin Isolation & Decoding Fault-Tolerance (`ui/progress.py`, `ui/preview.py`)**:
+    - Added `stdin=subprocess.DEVNULL` and FFmpeg `-nostdin` to prevent child processes from stealing terminal keystrokes (such as `q` killing FFmpeg).
+    - Added `encoding="utf-8", errors="replace"` to all `Popen` invocations, preventing `UnicodeDecodeError` crashes on binary/ID3 metadata.
+    - Broadened spawn error handling from `FileNotFoundError` to catch `PermissionError` and `OSError`.
+26. **MKV Dotfile Planting Protection & Collision Handling (`workflows/mkv.py`, `workflows/utils.py`)**:
+    - Added `safe_name.lstrip(".")` to prevent extracted attachments from overwriting hidden shell files (`.bashrc`, `.zshenv`).
+    - Enforced `os.path.lexists()` checks across `mkv.py` and `unique_path` to prevent overwriting existing files and writing through dangling symlinks.
+    - Prevented in-place collision in MKV remuxing by defaulting to `_remux.mkv` when input is `.mkv`.
+27. **Strict ASCII & Inversion-Proof Parameter Validators (`config.py`, `workflows/`)**:
+    - Hardened all regex patterns with `[0-9]` and `\Z` to reject Unicode numerals and trailing newlines (`\n`).
+    - Bound `validate_coords` to enforce `0 <= left < right <= 16384` and `0 <= top < bottom <= 16384`.
+    - Added boundary enforcement to `validate_decimal` (audio volume 0.01-100.0, fade durations 0.1-86400.0, video fps 0.001-1000.0).
+    - Allowed `-2` in `validate_resolution` for mod-2 ffmpeg auto-scaling.
+28. **Subtitle Stream Single-Line Parser (`workflows/utils.py`)**:
+    - Constrained ffprobe stream selection to `-select_streams s:0` and parsed `splitlines()[0]` to prevent `subrip\nsubrip` multi-stream filename corruption.
+29. **Elimination of False `.txt` Auto-Overwrite Heuristic (`ui/progress.py`)**:
+    - Removed dangerous `target.endswith(".txt")` auto-assignment of `self.out_file`, preventing ExifTool and metadata operations from overwriting user text files.
+30. **Dependency & Updater Synchronization (`requirements.txt`, `install`, `update.sh`)**:
+    - Synchronized dependency version bounds across `requirements.txt`, `install`, `update.sh`, and `pyproject.toml`.
+    - Added `git -C "$INSTALL_DIR" pull --ff-only` to `update.sh` so `cli-studio update` updates application code.
+    - Replaced `pacman -Syu` in `install` with `pacman -S --needed` to avoid unintended full system upgrades.
 
 ---
 
@@ -89,8 +113,8 @@ The following issues identified during the adversarial audits have been fully re
 
 - **Focus:** Dedicated media manipulation (Video, Audio, Image) and Cloud Storage.
 - **Active Tool Count:** 62 verified CLI tools in `COMMAND_REGISTRY` (down from 74 after eliminating 12 document tools).
-- **Test Suite:** 142 automated unit, integration, and regression tests passing (`pytest`).
-- **Release Version:** `v1.1.0` tagged and released on GitHub.
+- **Test Suite:** 146 automated unit, integration, and regression tests passing (`pytest`).
+- **Release Version:** `v1.2.0` tagged and released on GitHub.
 - **Type Safety:** 0 mypy errors across 73 source files (`mypy --explicit-package-bases --check-untyped-defs .`).
 - **Linter Status:** 0 ruff errors across the entire codebase (`ruff check .`).
 - **Design System & CSS:** 100% intact. Zero styling modifications made to `studio_themes.py` or Textual stylesheets.

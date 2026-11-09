@@ -577,3 +577,91 @@ def test_kill_process_group_descendants_escalates_to_sigkill():
         time.sleep(0.05)
 
     assert proc.returncode in (-signal.SIGKILL, -9)
+
+
+def test_validate_coords_rejects_inverted_and_out_of_bounds():
+    from config import validate_coords
+    import pytest
+
+    # Valid coordinates
+    assert validate_coords("0,0,500,500") == (0, 0, 500, 500)
+    assert validate_coords("10, 20, 100, 200") == (10, 20, 100, 200)
+
+    # Inverted coordinates
+    with pytest.raises(ValueError, match="inverted"):
+        validate_coords("500,500,10,10")
+
+    # Inverted left/right
+    with pytest.raises(ValueError, match="inverted"):
+        validate_coords("200,10,100,50")
+
+    # Out of bounds (> 16384)
+    with pytest.raises(ValueError, match="out of bounds"):
+        validate_coords("0,0,999999999,999999999")
+
+    # Unicode digits or invalid characters
+    with pytest.raises(ValueError, match="Invalid coordinates"):
+        validate_coords("0,0,500\n,500")
+
+
+def test_validate_resolution_supports_mod2_and_rejects_newlines():
+    from config import validate_resolution
+    import pytest
+
+    assert validate_resolution("1280:720") == "1280:720"
+    assert validate_resolution("1920:-1") == "1920:-1"
+    assert validate_resolution("1920:-2") == "1920:-2"
+
+    with pytest.raises(ValueError, match="Invalid resolution"):
+        validate_resolution("1280:720\n")
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        validate_resolution("1280:-3")
+
+
+def test_unique_path_skips_dangling_symlinks(tmp_path):
+    import os
+    from workflows.utils import unique_path
+
+    dangling = tmp_path / "clip.mp4"
+    os.symlink(tmp_path / "non_existent.mp4", dangling)
+
+    # unique_path must recognize the dangling symlink exists via lexists and increment
+    candidate = unique_path(str(tmp_path), "clip", ".mp4")
+    assert candidate != str(dangling)
+    assert candidate.endswith("clip_2.mp4")
+
+
+def test_mkv_extract_attachments_strips_leading_dots(monkeypatch, tmp_path):
+    from workflows import mkv
+    from ui.progress import GenericCliProgressScreen
+
+    monkeypatch.setattr(
+        "workflows.mkv._probe_attachments",
+        lambda _p: [
+            {
+                "id": 1,
+                "filename": ".bashrc",
+                "mimetype": "text/plain",
+                "size": 100,
+            },
+            {
+                "id": 2,
+                "filename": "...zshenv",
+                "mimetype": "text/plain",
+                "size": 100,
+            },
+        ],
+    )
+
+    first = mkv.build_extract_mkv_attachments_flow()
+    result, state = run_wizard(first, "/tmp/input.mkv", str(tmp_path))
+    assert isinstance(result, GenericCliProgressScreen)
+    assert len(result.cmds) == 2
+    cmd0 = " ".join(result.cmds[0])
+    cmd1 = " ".join(result.cmds[1])
+    # Leading dots must be stripped from filenames
+    assert "/.bashrc" not in cmd0
+    assert "/bashrc" in cmd0
+    assert "/...zshenv" not in cmd1
+    assert "/zshenv" in cmd1

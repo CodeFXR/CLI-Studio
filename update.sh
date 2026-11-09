@@ -42,9 +42,9 @@ BOLD="\033[1m"
 RESET="\033[0m"
 
 PYTHON_PACKAGES=(
-    "textual>=0.85,<7.0"
+    "textual>=0.85,<10.0"
     "textual-image>=0.10,<2.0"
-    "Pillow>=10.0,<12.0"
+    "Pillow>=10.0,<15.0"
     "yt-dlp>=2024.1.1"
     "natsort>=8.0,<10.0"
 )
@@ -54,6 +54,16 @@ if [ ! -d "$VENV_DIR" ]; then
     echo "Run the installer first:"
     echo "  curl -fsSL https://cso.codefxr.com/install | bash"
     exit 1
+fi
+
+if [ -d "$INSTALL_DIR/.git" ]; then
+    echo -e "${CYAN}${BOLD}Updating CLI-Studio application code...${RESET}"
+    if git -C "$INSTALL_DIR" pull --ff-only --quiet 2>/dev/null; then
+        echo -e "  ${GREEN}Application code updated.${RESET}"
+    else
+        echo -e "  ${YELLOW}Notice: Git pull skipped (local edits or non-fast-forward).${RESET}"
+    fi
+    echo
 fi
 
 echo -e "${CYAN}${BOLD}Updating CLI-Studio Python packages...${RESET}"

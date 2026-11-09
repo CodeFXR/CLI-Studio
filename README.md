@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python Version" />
   <img src="https://img.shields.io/badge/Built%20With-Textual-00dadf.svg" alt="Built with Textual" />
   <img src="https://img.shields.io/badge/Tools-62%20CLI%20Utilities-orange.svg" alt="Tools" />
-  <img src="https://img.shields.io/badge/Tests-142%20Passed-success.svg" alt="Tests" />
+  <img src="https://img.shields.io/badge/Tests-146%20Passed-success.svg" alt="Tests" />
   <img src="https://img.shields.io/badge/Type%20Safety-Mypy%20Strict-blue.svg" alt="Type Safety" />
   <img src="https://img.shields.io/badge/Code%20Style-Ruff-000000.svg" alt="Code Style" />
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License" />

@@ -16,7 +16,7 @@ def build_change_volume_flow():
         param_placeholder="e.g. 2.0 (200%) or 0.5 (50%)",
         param_default="2.0",
         param_key="vol",
-        param_validator=validate_decimal,
+        param_validator=lambda v: validate_decimal(v, min_val=0.01, max_val=100.0),
     )
 
 
@@ -74,7 +74,7 @@ def build_fade_audio_flow():
         param_placeholder="3",
         param_default="3",
         param_key="dur",
-        param_validator=validate_decimal,
+        param_validator=lambda v: validate_decimal(v, min_val=0.1, max_val=86400.0),
     )
 
 
