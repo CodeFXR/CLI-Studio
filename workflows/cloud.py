@@ -73,6 +73,7 @@ class _RcloneListRemotesScreen(_LoggingModalScreen):
         try:
             result = subprocess.run(
                 ["rclone", "listremotes", "--long"],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -105,6 +106,15 @@ class _RcloneListRemotesScreen(_LoggingModalScreen):
             )
             self.app.call_from_thread(self.safe_dismiss)
             return
+        if os.path.islink(self.target):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Target cannot be a symlink: {escape(self.target)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
+
         try:
             with open(self.target, "w", encoding="utf-8") as handle:
                 handle.write(result.stdout)

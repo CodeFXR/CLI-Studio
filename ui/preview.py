@@ -3,6 +3,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 from typing import cast
 
 from rich.markup import escape
@@ -13,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 from textual.worker import get_current_worker
 
+from ui.progress import _register_process_group, _unregister_process_group
 from workflows.backends import ChafaBackend, get_backend
 
 
@@ -38,7 +40,9 @@ class PreviewModalScreen(ModalScreen):
 
     def action_close(self) -> None:
         self._cancelled = True
-        self._kill_process()
+        proc = self.process
+        if proc and proc.poll() is None:
+            threading.Thread(target=self._kill_process, daemon=True).start()
         try:
             self.dismiss()
         except Exception:
@@ -46,39 +50,45 @@ class PreviewModalScreen(ModalScreen):
 
     def _kill_process(self) -> None:
         proc = self.process
-        if proc:
-            pgid = getattr(proc, "pid", None)
-            if pgid is not None:
-                try:
-                    if hasattr(os, "killpg"):
-                        os.killpg(pgid, signal.SIGTERM)
-                    else:
-                        proc.terminate()
-                except (ProcessLookupError, OSError):
-                    pass
+        if not proc or proc.poll() is not None:
+            return
+        pgid = getattr(proc, "pid", None)
+        if pgid is None:
+            return
+        _unregister_process_group(pgid)
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                proc.terminate()
+        except (ProcessLookupError, OSError):
+            pass
 
-                try:
-                    proc.wait(timeout=1.5)
-                except (subprocess.TimeoutExpired, Exception):
-                    pass
+        try:
+            proc.wait(timeout=1.0)
+        except (subprocess.TimeoutExpired, Exception):
+            pass
 
-                try:
-                    if hasattr(os, "killpg"):
-                        os.killpg(pgid, signal.SIGKILL)
-                    else:
-                        proc.kill()
-                except (ProcessLookupError, OSError):
-                    pass
+        if proc.poll() is not None:
+            return
 
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
 
-                try:
-                    proc.wait(timeout=0.5)
-                except Exception:
-                    pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+        try:
+            proc.wait(timeout=0.2)
+        except Exception:
+            pass
 
     def _run_cmd(self, cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         if self._cancelled:
@@ -94,6 +104,7 @@ class PreviewModalScreen(ModalScreen):
             start_new_session=True,
         )
         self.process = proc
+        _register_process_group(proc.pid)
         if self._cancelled:
             self._kill_process()
             raise RuntimeError("Preview cancelled")
@@ -107,6 +118,8 @@ class PreviewModalScreen(ModalScreen):
             self._kill_process()
             raise
         finally:
+            if proc:
+                _unregister_process_group(proc.pid)
             self.process = None
 
     def _show_content(self, output: str, status: str) -> None:

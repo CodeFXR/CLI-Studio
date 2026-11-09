@@ -320,7 +320,20 @@ def validate_quality(v: str) -> str:
     if not (1 <= q <= 100):
         raise ValueError(f"Quality '{v}' must be between 1 and 100.")
     return str(q)
-    return str(q)
+
+
+_TIMESTAMP_RE = re.compile(r"^([0-9]{1,2}:)?([0-9]{1,2}:)?[0-9]{1,2}(\.[0-9]+)?\Z")
+
+
+def validate_timestamp(v: str) -> str:
+    if not isinstance(v, str) or "\n" in v or "\r" in v:
+        raise ValueError(f"Invalid timestamp '{v}'.")
+    cleaned = v.strip()
+    if not _TIMESTAMP_RE.match(cleaned):
+        raise ValueError(
+            f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+        )
+    return cleaned
 
 
 def validate_remote_name(v: str) -> str:
@@ -347,8 +360,9 @@ def validate_cache_dir(v: str) -> str:
     if not v.strip():
         return ""
     expanded = os.path.realpath(os.path.expanduser(v))
+    home_dir = os.path.realpath(os.path.expanduser("~"))
     allowed_roots = [
-        os.path.realpath(os.path.expanduser("~")),
+        home_dir,
         os.path.realpath("/tmp"),
         os.path.realpath("/var/tmp"),
     ]
@@ -360,6 +374,21 @@ def validate_cache_dir(v: str) -> str:
             f"Cache directory '{v}' resolves to '{expanded}'. "
             "Use a path under $HOME, /tmp, or /var/tmp."
         )
+    if expanded == home_dir:
+        raise ValueError(
+            f"Cache directory '{v}' cannot be the user home directory directly. "
+            "Use a dedicated subdirectory such as ~/.cache/cli-studio."
+        )
+    sensitive_home_dirs = {
+        os.path.join(home_dir, name)
+        for name in (".ssh", ".gnupg", ".aws", ".config", ".bashrc", ".profile", ".local", ".cli-studio")
+    }
+    for sensitive in sensitive_home_dirs:
+        if expanded == sensitive or expanded.startswith(sensitive + "/"):
+            raise ValueError(
+                f"Cache directory '{v}' resolves to sensitive location '{expanded}'. "
+                "Use a non-sensitive cache path."
+            )
     for prefix in _BLOCKED_CACHE_PREFIXES:
         resolved_prefix = os.path.realpath(prefix)
         if expanded == resolved_prefix.rstrip("/") or expanded.startswith(resolved_prefix + "/"):

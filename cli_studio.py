@@ -204,7 +204,7 @@ class CommandSuggester(Suggester):
 
 class CliStudioApp(App):
     TITLE = "CLI-Studio"
-    VERSION = "v1.2.0"
+    VERSION = "v1.3.0"
     CSS = LAYOUT_CSS + THEMES_CSS
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),

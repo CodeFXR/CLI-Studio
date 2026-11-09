@@ -22,7 +22,7 @@ def _probe_subtitle_tracks(mkv_path: str) -> list[dict]:
         mkv_path,
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
     if res.returncode != 0:
@@ -59,7 +59,7 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         mkv_path,
     ]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
     if res.returncode != 0:
@@ -241,7 +241,7 @@ def build_add_subtitles_to_mkv_flow():
         if lang.startswith("und"):
             cmd = ["mkvmerge", "-o", out_abs, in_abs, sub_abs]
         else:
-            cmd = ["mkvmerge", "-o", out_abs, "--language", f"0:{lang}", in_abs, sub_abs]
+            cmd = ["mkvmerge", "-o", out_abs, in_abs, "--language", f"0:{lang}", sub_abs]
         return GenericCliProgressScreen(cmd, "mkvmerge", out_abs)
 
     return FilePickerScreen("Select MKV File:", "", {}, step2)

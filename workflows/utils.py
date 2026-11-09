@@ -54,7 +54,7 @@ def get_media_duration(filepath):
     ]
     try:
         res = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
@@ -92,6 +92,7 @@ def probe_first_subtitle_codec(video_path: str) -> str:
     try:
         res = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,

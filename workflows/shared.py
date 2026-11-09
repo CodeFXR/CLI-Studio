@@ -1,17 +1,28 @@
 import os
 from typing import cast
 
-from config import _load_full_config
+from config import _load_full_config, validate_timestamp
 from ui.progress import DownloadProgressScreen, FfmpegProgressScreen, GenericCliProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.backends import GalleryDlBackend, get_backend
 from workflows.utils import abspath, get_media_duration
 
 
+_ALLOWED_BROWSERS = {"chrome", "chromium", "firefox", "brave", "edge", "safari", "opera", "vivaldi", "whale"}
+
+
+def _safe_cookies(v: str) -> str:
+    if not v:
+        return ""
+    base = v.split(":")[0].strip().lower()
+    return v if base in _ALLOWED_BROWSERS else ""
+
+
 def build_download_flow(is_audio: bool, is_playlist: bool = False):
     config = _load_full_config()
-    cookies = config.get("yt_dlp_cookies", "")
-    remote_components = config.get("yt_dlp_remote_components", "")
+    cookies = _safe_cookies(config.get("yt_dlp_cookies", ""))
+    raw_rc = config.get("yt_dlp_remote_components", "")
+    remote_components = raw_rc if raw_rc in ("ejs:github", "ejs:npm") or not raw_rc else ""
 
     def step2(url, state):
         state["url"] = url
@@ -58,15 +69,27 @@ def build_convert_media_flow(is_audio: bool):
 def build_trim_media_flow(is_video: bool):
     def step2(in_file, state):
         state["in_file"] = in_file
-        return TextInputScreen("Start Time:", "e.g. 00:01:30 or 90", "00:00:00", state, step3)
+        return TextInputScreen(
+            "Start Time:",
+            "e.g. 00:01:30 or 90",
+            "00:00:00",
+            state,
+            step3,
+        )
 
     def step3(start, state):
-        state["start"] = start
+        state["start"] = validate_timestamp(start)
         end_time = get_media_duration(state["in_file"])
-        return TextInputScreen("End Time:", "e.g. 00:02:45 or 165", end_time, state, step4)
+        return TextInputScreen(
+            "End Time:",
+            "e.g. 00:02:45 or 165",
+            end_time,
+            state,
+            step4,
+        )
 
     def step4(end, state):
-        state["end"] = end
+        state["end"] = validate_timestamp(end)
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen("Save As (or batch dir):", f"{base}_trimmed{ext}", state, step5)
 

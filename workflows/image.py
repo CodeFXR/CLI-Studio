@@ -189,7 +189,12 @@ def build_exiftool_strip_flow():
         if not in_file or not in_file.strip():
             return None
         expanded_in = os.path.abspath(os.path.expanduser(in_file))
-        if expanded_in in ("/", os.path.realpath(os.path.expanduser("~"))):
+        real_in = os.path.realpath(expanded_in)
+        home = os.path.realpath(os.path.expanduser("~"))
+        if real_in in ("/", home) or any(
+            real_in == os.path.join(home, d) or real_in.startswith(os.path.join(home, d) + "/")
+            for d in (".ssh", ".gnupg", ".aws", ".config")
+        ):
             return None
         cmd = ["exiftool", "-overwrite_original", "-all=", expanded_in]
         return GenericCliProgressScreen(cmd, "ExifTool", in_file)

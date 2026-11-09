@@ -16,7 +16,7 @@ def build_change_volume_flow():
         param_placeholder="e.g. 2.0 (200%) or 0.5 (50%)",
         param_default="2.0",
         param_key="vol",
-        param_validator=lambda v: validate_decimal(v, min_val=0.01, max_val=100.0),
+        param_validator=lambda v: validate_decimal(v, min_val=0.01, max_val=10.0),
     )
 
 

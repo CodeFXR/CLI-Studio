@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
-
+TERM="${TERM:-xterm-256color}"
 if ! infocmp "$TERM" >/dev/null 2>&1; then
     export TERM=xterm-256color
 fi
+
+set -euo pipefail
 
 # Refuse to run as root: this script touches only the user's venv.
 if [ "$(id -u)" -eq 0 ]; then

@@ -63,6 +63,7 @@ class ChafaBackend(Backend):
         return [
             "ffmpeg",
             self._ffmpeg_overwrite_flag(),
+            "-nostdin",
             "-i",
             input_path,
             "-filter_complex",

@@ -3,6 +3,8 @@ import os
 import re
 import signal
 import subprocess
+import threading
+import time
 from typing import Any, cast
 
 import config
@@ -19,36 +21,45 @@ from textual.worker import get_current_worker
 from workflows.backends import PillowBackend, YtDlpBackend, get_backend
 from workflows.utils import unique_path
 
+Image.MAX_IMAGE_PIXELS = 100_000_000
 
 _ACTIVE_PROCESS_GROUPS: set[int] = set()
+_PG_LOCK = threading.Lock()
 
 
 def _register_process_group(pgid: int | None) -> None:
     if pgid is not None and pgid > 0:
-        _ACTIVE_PROCESS_GROUPS.add(pgid)
+        with _PG_LOCK:
+            _ACTIVE_PROCESS_GROUPS.add(pgid)
 
 
 def _unregister_process_group(pgid: int | None) -> None:
     if pgid is not None:
-        _ACTIVE_PROCESS_GROUPS.discard(pgid)
+        with _PG_LOCK:
+            _ACTIVE_PROCESS_GROUPS.discard(pgid)
 
 
 def cleanup_active_process_groups() -> None:
     """Ensure all spawned background process groups are terminated on app exit."""
-    active = list(_ACTIVE_PROCESS_GROUPS)
+    with _PG_LOCK:
+        active = list(_ACTIVE_PROCESS_GROUPS)
+    if not active:
+        return
     for pgid in active:
         try:
             if hasattr(os, "killpg"):
                 os.killpg(pgid, signal.SIGTERM)
         except (ProcessLookupError, OSError):
             pass
-    for pgid in active:
-        try:
-            if hasattr(os, "killpg"):
-                os.killpg(pgid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
-        _ACTIVE_PROCESS_GROUPS.discard(pgid)
+    time.sleep(0.5)
+    with _PG_LOCK:
+        for pgid in active:
+            try:
+                if hasattr(os, "killpg"):
+                    os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            _ACTIVE_PROCESS_GROUPS.discard(pgid)
 
 
 atexit.register(cleanup_active_process_groups)
@@ -89,7 +100,7 @@ class _LoggingModalScreen(ModalScreen[Any]):
                 pass
 
     def _kill_process_group(self, proc: subprocess.Popen | None):
-        if not proc:
+        if not proc or proc.poll() is not None:
             return
         pgid = getattr(proc, "pid", None)
         if pgid is None:
@@ -108,9 +119,12 @@ class _LoggingModalScreen(ModalScreen[Any]):
 
         # Allow grace period for clean exit
         try:
-            proc.wait(timeout=1.5)
+            proc.wait(timeout=1.0)
         except (subprocess.TimeoutExpired, Exception):
             pass
+
+        if proc.poll() is not None:
+            return
 
         # Phase 2: Unconditional SIGKILL to guarantee no surviving children or grandchildren
         try:
@@ -127,7 +141,7 @@ class _LoggingModalScreen(ModalScreen[Any]):
             pass
 
         try:
-            proc.wait(timeout=0.5)
+            proc.wait(timeout=0.2)
         except Exception:
             pass
 
@@ -185,8 +199,9 @@ class DownloadProgressScreen(_LoggingModalScreen):
 
     def action_cancel_download(self):
         self._cancelled = True
-        if self.process:
-            self._kill_process_group(self.process)
+        proc = self.process
+        if proc and proc.poll() is None:
+            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Download Cancelled", severity="warning")
 
@@ -237,6 +252,9 @@ class DownloadProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
+            if self._cancelled or (worker and worker.is_cancelled):
+                self._kill_process_group(self.process)
+                return
         except FileNotFoundError:
             self.app.call_from_thread(
                 self.app.notify, "yt-dlp not found. Please install it.", severity="error"
@@ -278,6 +296,12 @@ class DownloadProgressScreen(_LoggingModalScreen):
         finally:
             if proc:
                 _unregister_process_group(proc.pid)
+                if proc.stdout:
+                    try:
+                        proc.stdout.close()
+                    except Exception:
+                        pass
+            self.process = None
 
         self.app.call_from_thread(self.safe_dismiss)
 
@@ -308,8 +332,9 @@ class FfmpegProgressScreen(_LoggingModalScreen):
 
     def action_cancel_process(self):
         self._cancelled = True
-        if self.process:
-            self._kill_process_group(self.process)
+        proc = self.process
+        if proc and proc.poll() is None:
+            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
 
@@ -384,6 +409,9 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                         start_new_session=True,
                     )
                     _register_process_group(self.process.pid)
+                    if self._cancelled or (worker and worker.is_cancelled):
+                        self._kill_process_group(self.process)
+                        break
                     _, stderr = self.process.communicate()
                     rc = self.process.returncode
                 except Exception:
@@ -450,6 +478,9 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
+            if self._cancelled or (worker and worker.is_cancelled):
+                self._kill_process_group(self.process)
+                return
             self.app.call_from_thread(
                 self.write_log, self._log_msg("executing", escape(" ".join(cmd)))
             )
@@ -485,6 +516,12 @@ class FfmpegProgressScreen(_LoggingModalScreen):
         finally:
             if proc:
                 _unregister_process_group(proc.pid)
+                if proc.stdout:
+                    try:
+                        proc.stdout.close()
+                    except Exception:
+                        pass
+            self.process = None
 
         self.app.call_from_thread(self.safe_dismiss)
 
@@ -517,8 +554,9 @@ class GenericCliProgressScreen(_LoggingModalScreen):
 
     def action_cancel_process(self):
         self._cancelled = True
-        if self.process:
-            self._kill_process_group(self.process)
+        proc = self.process
+        if proc and proc.poll() is None:
+            threading.Thread(target=self._kill_process_group, args=(proc,), daemon=True).start()
         self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
 
@@ -528,14 +566,21 @@ class GenericCliProgressScreen(_LoggingModalScreen):
         except Exception:
             worker = None
 
-        if self.out_file and os.path.islink(self.out_file):
-            self.app.call_from_thread(
-                self.app.notify,
-                f"Output cannot be a symbolic link: {escape(self.out_file)}",
-                severity="error",
-            )
+        if not self.cmds:
             self.app.call_from_thread(self.safe_dismiss)
             return
+
+        if self.out_file:
+            candidates = [self.out_file, self.out_file + ".txt"]
+            for target in candidates:
+                if os.path.islink(target):
+                    self.app.call_from_thread(
+                        self.app.notify,
+                        f"Output cannot be a symbolic link: {escape(target)}",
+                        severity="error",
+                    )
+                    self.app.call_from_thread(self.safe_dismiss)
+                    return
 
         bar = self.progress_bar
         is_batch = len(self.cmds) > 1
@@ -559,6 +604,9 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     start_new_session=True,
                 )
                 _register_process_group(self.process.pid)
+                if self._cancelled or (worker and worker.is_cancelled):
+                    self._kill_process_group(self.process)
+                    break
             except FileNotFoundError:
                 self.app.call_from_thread(
                     self.app.notify,
@@ -605,6 +653,12 @@ class GenericCliProgressScreen(_LoggingModalScreen):
             finally:
                 if proc:
                     _unregister_process_group(proc.pid)
+                    if proc.stdout:
+                        try:
+                            proc.stdout.close()
+                        except Exception:
+                            pass
+                self.process = None
 
             if is_batch and bar:
                 self.app.call_from_thread(bar.update, progress=idx + 1)
@@ -733,6 +787,14 @@ class PillowProgressScreen(_LoggingModalScreen):
             return
 
         if os.path.isdir(expanded_in):
+            if os.path.islink(expanded_out):
+                self.app.call_from_thread(
+                    self.app.notify,
+                    f"Output directory cannot be a symbolic link: {escape(expanded_out)}",
+                    severity="error",
+                )
+                self.app.call_from_thread(self.safe_dismiss)
+                return
             os.makedirs(expanded_out, exist_ok=True)
             files = [
                 f for f in os.listdir(expanded_in) if os.path.isfile(os.path.join(expanded_in, f))
@@ -756,6 +818,8 @@ class PillowProgressScreen(_LoggingModalScreen):
                 if not ext.startswith("."):
                     ext = "." + ext
                 out_f = unique_path(expanded_out, os.path.splitext(f)[0], ext)
+                if os.path.islink(out_f):
+                    continue
 
                 try:
                     with Image.open(in_f) as img:
@@ -766,6 +830,12 @@ class PillowProgressScreen(_LoggingModalScreen):
                             img.save(out_f, optimize=True, quality=int(self.dimensions))
                         else:
                             img.save(out_f)
+                except Image.DecompressionBombError:
+                    failures.append(f)
+                    self.app.call_from_thread(
+                        self.write_log,
+                        self._log_msg("failed", f"{escape(f)} (decompression bomb detected)"),
+                    )
                 except Exception as e:
                     failures.append(f)
                     self.app.call_from_thread(
@@ -825,6 +895,10 @@ class PillowProgressScreen(_LoggingModalScreen):
                     img.save(expanded_out)
             self.app.call_from_thread(
                 self.app.notify, "Image Processing Complete!", severity="information"
+            )
+        except Image.DecompressionBombError:
+            self.app.call_from_thread(
+                self.app.notify, "Error: Image decompression bomb detected", severity="error"
             )
         except Exception as e:
             self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
