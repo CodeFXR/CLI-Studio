@@ -53,8 +53,14 @@ def load_plugins(
     *,
     menus: MutableMapping[str, list[str]] | None = None,
     help_registry: MutableMapping[str, str] | None = None,
-    allow_explicit: bool = True,
+    allow_explicit: bool = False,
 ) -> int:
+    """Load plugins into the registry.
+
+    Security boundary: plugins are disabled by default unless 'enable_plugins: True'
+    is configured in config.json. Passing an explicit plugin_dir alone will not bypass
+    the gate unless allow_explicit=True is explicitly passed by a programmatic caller.
+    """
     try:
         import config
 

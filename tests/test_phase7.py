@@ -298,7 +298,7 @@ def test_plugin_loader_registers_commands_menus_and_help(tmp_path):
     menus: dict[str, list[str]] = {"main": []}
     help_registry: dict[str, str] = {}
 
-    loaded = load_plugins(registry, tmp_path, menus=menus, help_registry=help_registry)
+    loaded = load_plugins(registry, tmp_path, menus=menus, help_registry=help_registry, allow_explicit=True)
 
     assert loaded == 1
     assert callable(registry["demo tool"])
@@ -322,7 +322,7 @@ def test_plugin_loader_preserves_builtins_and_skips_private_files(tmp_path):
 
     registry = {"built-in": builtin}
 
-    loaded = load_plugins(registry, tmp_path)
+    loaded = load_plugins(registry, tmp_path, allow_explicit=True)
 
     assert loaded == 1
     assert registry["built-in"] is builtin
@@ -338,7 +338,7 @@ def test_plugin_loader_continues_after_broken_plugin(tmp_path):
     )
     registry: dict[str, Any] = {}
 
-    loaded = load_plugins(registry, tmp_path)
+    loaded = load_plugins(registry, tmp_path, allow_explicit=True)
 
     assert loaded == 1
     assert "working tool" in registry
@@ -348,8 +348,19 @@ def test_plugin_loader_creates_missing_directory(tmp_path):
     plugin_dir = tmp_path / "nested" / "plugins"
     registry: dict[str, Any] = {}
 
-    assert load_plugins(registry, plugin_dir) == 0
+    assert load_plugins(registry, plugin_dir, allow_explicit=True) == 0
     assert plugin_dir.is_dir()
+
+
+def test_plugin_loader_gate_blocks_explicit_dir_without_optin(tmp_path, monkeypatch):
+    monkeypatch.setattr("config._load_full_config", lambda: {})
+    (tmp_path / "sample.py").write_text(
+        "PLUGIN_REGISTRY = {'sample': lambda: None}\n",
+        encoding="utf-8",
+    )
+    registry: dict[str, Any] = {}
+    assert load_plugins(registry, tmp_path) == 0
+    assert "sample" not in registry
 
 
 @pytest.mark.asyncio

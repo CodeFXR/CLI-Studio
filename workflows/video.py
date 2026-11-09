@@ -8,6 +8,7 @@ from workflows.utils import (
     escape_subtitles_filter_arg,
     file_arg,
     probe_first_subtitle_codec,
+    probe_has_audio,
     subtitle_ext_for_codec,
 )
 
@@ -248,15 +249,25 @@ def build_video_speed_flow():
         return FilePickerScreen("Save As (or batch dir):", f"{base}_{val}x{ext}", state, step4)
 
     def step4(out_file, state):
-        args = [
-            "-filter_complex",
-            f"[0:v]setpts={state['v_pts']}*PTS[v];[0:a]atempo={state['speed']}[a]",
-            "-map",
-            "[v]",
-            "-map",
-            "[a]",
-        ]
-        return FfmpegProgressScreen(state["in_file"], out_file, args)
+        in_file = state["in_file"]
+        has_audio = probe_has_audio(in_file) if os.path.isfile(in_file) else True
+        if has_audio:
+            args = [
+                "-filter_complex",
+                f"[0:v]setpts={state['v_pts']}*PTS[v];[0:a]atempo={state['speed']}[a]",
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+            ]
+        else:
+            args = [
+                "-filter_complex",
+                f"[0:v]setpts={state['v_pts']}*PTS[v]",
+                "-map",
+                "[v]",
+            ]
+        return FfmpegProgressScreen(in_file, out_file, args)
 
     return FilePickerScreen("Select Video File/Folder:", "", {}, step2)
 
@@ -360,18 +371,24 @@ def build_fade_video_flow():
 def build_extract_subs_flow():
     def step2(in_file, state):
         state["in_file"] = in_file
-        expanded = os.path.abspath(os.path.expanduser(in_file))
+        expanded = file_arg(in_file)
         codec = probe_first_subtitle_codec(expanded)
         ext = subtitle_ext_for_codec(codec)
+        state["codec"] = codec
         state["ext"] = ext
         base, _ = os.path.splitext(in_file)
         return FilePickerScreen("Save Subtitles As:", f"{base}.{ext}", state, step3)
 
     def step3(out_file, state):
+        codec = state.get("codec", "").lower()
+        if codec == "mov_text":
+            args = ["-map", "0:s:0", "-c:s", "srt"]
+        else:
+            args = ["-map", "0:s:0", "-c:s", "copy"]
         return FfmpegProgressScreen(
             state["in_file"],
             out_file,
-            ["-map", "0:s:0", "-c:s", "copy"],
+            args,
             target_ext=state.get("ext", "srt"),
         )
 

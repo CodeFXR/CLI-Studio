@@ -6,9 +6,12 @@ SUBTITLE_EXT_MAP = {
     "subrip": "srt",
     "s_text": "srt",
     "mov_text": "srt",
+    "text": "srt",
     "ass": "ass",
     "ssa": "ass",
     "webvtt": "vtt",
+    "hdmv_pgs_subtitle": "sup",
+    "dvd_subtitle": "sub",
 }
 
 
@@ -185,3 +188,34 @@ def subtitle_ext_for_codec(codec: str) -> str:
     if not codec:
         return "srt"
     return SUBTITLE_EXT_MAP.get(codec.lower(), codec.lower())
+
+
+def probe_has_audio(video_path: str) -> bool:
+    """Return True if the media file contains at least one audio stream."""
+    if not video_path or not os.path.isfile(video_path):
+        return True
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        "--",
+        file_arg(video_path),
+    ]
+    try:
+        res = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        return bool(res.stdout.strip())
+    except Exception:
+        return True

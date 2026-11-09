@@ -20,7 +20,7 @@ from textual.widgets import Label, ProgressBar
 from textual.worker import get_current_worker
 
 from workflows.backends import PillowBackend, YtDlpBackend, get_backend
-from workflows.utils import open_output_nofollow, unique_path
+from workflows.utils import file_arg, open_output_nofollow, unique_path
 
 Image.MAX_IMAGE_PIXELS = 50_000_000
 
@@ -92,6 +92,15 @@ def terminate_process(proc: subprocess.Popen[Any] | None, grace: float = _TERM_G
                     pass
             except Exception:
                 pass
+
+            if pgid is not None:
+                # F-01: If group leader exited cleanly but child processes survived, probe and SIGKILL
+                try:
+                    os.killpg(pgid, 0)
+                    _signal_group_or_process(proc, pgid, signal.SIGKILL)
+                except OSError:
+                    pass
+
             _unregister_process_group(getattr(proc, "pid", None))
             return True
         finally:
@@ -184,8 +193,6 @@ class _LoggingModalScreen(ModalScreen[Any]):
         super().__init__(*args, **kwargs)
         self._dismissed = False
         self._cancel_event = threading.Event()
-        self._kill_dispatched = False
-        self._kill_lock = threading.Lock()
         self._app_override = None
 
     @property
@@ -245,13 +252,15 @@ class _LoggingModalScreen(ModalScreen[Any]):
         terminate_process(proc, grace=timeout)
 
     def write_log(self, text):
+        clean_text = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", str(text))
+        clean_text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]", "", clean_text)
         try:
             log = cast(Any, self.app.query_one("#terminal-log"))
-            log.write(text)
+            log.write(clean_text)
         except Exception:
             try:
                 log = cast(Any, self.app.query_one("#terminal-log"))
-                log.write(escape(str(text)))
+                log.write(escape(clean_text))
             except Exception:
                 pass
 
@@ -465,8 +474,8 @@ class FfmpegProgressScreen(_LoggingModalScreen):
             worker = get_current_worker()
         except Exception:
             worker = None
-        expanded_in = os.path.abspath(os.path.expanduser(self.input_file))
-        expanded_out = os.path.abspath(os.path.expanduser(self.output_file))
+        expanded_in = file_arg(self.input_file)
+        expanded_out = file_arg(self.output_file)
         overwrite_flag = _ffmpeg_overwrite_flag()
 
         if os.path.islink(expanded_out):
@@ -515,11 +524,11 @@ class FfmpegProgressScreen(_LoggingModalScreen):
             for idx, f in enumerate(files):
                 if self._cancelled or (worker and worker.is_cancelled):
                     break
-                in_f = os.path.join(expanded_in, f)
+                in_f = file_arg(os.path.join(expanded_in, f))
                 ext = self.target_ext if self.target_ext else os.path.splitext(f)[1]
                 if not ext.startswith("."):
                     ext = "." + ext
-                out_f = unique_path(expanded_out, os.path.splitext(f)[0], ext)
+                out_f = file_arg(unique_path(expanded_out, os.path.splitext(f)[0], ext))
 
                 cmd = ["ffmpeg", "-nostdin", overwrite_flag, "-i", in_f] + self.action_args + [out_f]
                 try:
@@ -529,6 +538,8 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.PIPE,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         start_new_session=True,
                     )
                     _register_process_group(self.process.pid)
@@ -725,23 +736,22 @@ class GenericCliProgressScreen(_LoggingModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
-        # Guard both self.target and self.out_file against pre-planted symlinks
+        # Guard output files that will be written against pre-planted destination symlinks
         candidates = []
-        if self.target:
-            candidates.append(self.target)
-            if self.tool_name.lower() == "tesseract" and not self.target.lower().endswith(".txt"):
-                candidates.append(self.target + ".txt")
         if self.out_file:
             candidates.append(self.out_file)
-            if not self.out_file.lower().endswith(".txt"):
-                candidates.append(self.out_file + ".txt")
+        if self.tool_name.lower() == "tesseract" and self.target:
+            if not self.target.lower().endswith(".txt"):
+                candidates.append(self.target + ".txt")
+            else:
+                candidates.append(self.target)
 
         for target in candidates:
             expanded = os.path.abspath(os.path.expanduser(target))
             if os.path.islink(expanded) or (os.path.lexists(expanded) and not os.path.exists(expanded)):
                 self.app.call_from_thread(
                     self.app.notify,
-                    f"Target cannot be a symbolic link: {escape(expanded)}",
+                    f"Output cannot be a symbolic link: {escape(expanded)}",
                     severity="error",
                 )
                 self.app.call_from_thread(self.safe_dismiss)

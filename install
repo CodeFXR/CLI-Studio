@@ -45,7 +45,7 @@ REPO_URL="https://github.com/codefxr/cli-studio.git" # Update if your GitHub rep
 # and pulled `main` unpinned, so the curl|bash entry point executed
 # whatever happened to be on main that day. Override deliberately with
 # CLI_STUDIO_REF=main if you accept that risk.
-CLI_STUDIO_REF="${CLI_STUDIO_REF:-v1.4.0}"
+CLI_STUDIO_REF="${CLI_STUDIO_REF:-v1.4.1}"
 TEMP_DIR=""
 cleanup_temp() {
     if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
@@ -61,7 +61,7 @@ PYTHON_PACKAGES=(
     "textual>=0.85,<10.0"
     "textual-image>=0.10,<2.0"
     "Pillow>=10.0,<15.0"
-    "yt-dlp>=2024.1.1,<2028.0.0"
+    "yt-dlp>=2024.1.1,<2026"
     "natsort>=8.0,<10.0"
 )
 

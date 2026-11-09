@@ -1,5 +1,4 @@
 import os
-import re
 from typing import cast
 
 from config import _load_full_config, sanitize_yt_dlp_config, validate_timestamp
@@ -8,26 +7,8 @@ from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.backends import GalleryDlBackend, get_backend
 from workflows.utils import abspath, file_arg, get_media_duration
 
-
-_ALLOWED_BROWSERS = {"brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"}
-_COOKIE_TOKEN_RE = re.compile(r"^[a-zA-Z0-9_\-+]+(:[a-zA-Z0-9_\-+.]+)?(::[a-zA-Z0-9_\-+.]+)?\Z")
-
-
-def _safe_cookies(v: str) -> str:
-    if not v:
-        return ""
-    cleaned = v.strip()
-    if not _COOKIE_TOKEN_RE.match(cleaned):
-        return ""
-    base = cleaned.split(":")[0].split("+")[0].strip().lower()
-    return cleaned if base in _ALLOWED_BROWSERS else ""
-
-
-def _safe_remote_components(v: str) -> str:
-    if not v:
-        return ""
-    cleaned = v.strip()
-    return cleaned if cleaned in ("ejs:github", "ejs:npm") else ""
+# yt-dlp cookie and remote-components sanitization lives exclusively in
+# config.sanitize_yt_dlp_config; local unverified duplicates must not be defined here.
 
 
 def build_download_flow(is_audio: bool, is_playlist: bool = False):
@@ -159,8 +140,8 @@ def file_in_out_flow(
     """
 
     def _step_save(out_file, state):
-        expanded_in = os.path.abspath(os.path.expanduser(state["in_file"]))
-        expanded_out = os.path.abspath(os.path.expanduser(out_file))
+        expanded_in = file_arg(state["in_file"])
+        expanded_out = file_arg(out_file)
         args = action_args(state) if callable(action_args) else action_args
         return progress_cls(expanded_in, expanded_out, args, target_ext=target_ext)
 
@@ -173,7 +154,7 @@ def file_in_out_flow(
         )
 
     def _step_input(in_file, state):
-        state["in_file"] = os.path.abspath(os.path.expanduser(in_file))
+        state["in_file"] = file_arg(in_file)
         if param_prompt:
             return TextInputScreen(
                 param_prompt, param_placeholder, param_default, state, _step_param
@@ -211,8 +192,8 @@ def file_file_in_out_flow(
     """
 
     def _step_save(out_file, state):
-        expanded_in = os.path.abspath(os.path.expanduser(state["in_file"]))
-        expanded_out = os.path.abspath(os.path.expanduser(out_file))
+        expanded_in = file_arg(state["in_file"])
+        expanded_out = file_arg(out_file)
         args = action_args(state) if callable(action_args) else action_args
         return progress_cls(expanded_in, expanded_out, args, target_ext=target_ext)
 

@@ -286,3 +286,107 @@ def test_open_output_nofollow_rejects_symlink():
         with open(target) as f:
             assert f.read() == "original"
 
+
+# ---------------------------------------------------------------- V-1 MKV Attachment Regression Tests
+def test_probe_attachments_ffprobe_fallback_yields_all_none_ids(monkeypatch):
+    import json
+    from workflows import mkv
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[0] == "mkvmerge":
+            raise FileNotFoundError("mkvmerge not installed")
+        class FakeRes:
+            returncode = 0
+            stdout = json.dumps({
+                "streams": [
+                    {
+                        "codec_type": "attachment",
+                        "tags": {"filename": "font.ttf", "NUMBER_OF_BYTES": "100"},
+                    },
+                    {
+                        "codec_type": "attachment",
+                        "tags": {"filename": "cover.jpg", "NUMBER_OF_BYTES": "200"},
+                    },
+                ]
+            })
+            stderr = ""
+        return FakeRes()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    res = mkv._probe_attachments("/tmp/movie.mkv")
+    assert len(res) == 2
+    assert res[0]["id"] is None
+    assert res[1]["id"] is None
+
+
+def test_probe_attachments_mkvmerge_skips_id_less_entries(monkeypatch):
+    import json
+    from workflows import mkv
+
+    def fake_run(cmd, *a, **kw):
+        class FakeRes:
+            returncode = 0
+            stdout = json.dumps({
+                "attachments": [
+                    {"file_name": "corrupt.ttf", "size": 100},  # No 'id' key
+                    {"id": 7, "file_name": "valid.ttf", "size": 200},
+                ]
+            })
+            stderr = ""
+        return FakeRes()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    res = mkv._probe_attachments("/tmp/movie.mkv")
+    assert len(res) == 1
+    assert res[0]["id"] == 7
+    assert res[0]["filename"] == "valid.ttf"
+
+
+def test_probe_attachments_failing_mkvmerge_does_not_fallback(monkeypatch):
+    from workflows import mkv
+
+    def fake_run(cmd, *a, **kw):
+        if cmd[0] == "mkvmerge":
+            raise subprocess.TimeoutExpired(cmd, 10)
+        raise AssertionError("ffprobe should not have been called on mkvmerge timeout")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert mkv._probe_attachments("/tmp/movie.mkv") == []
+
+
+# ---------------------------------------------------------------- R4 & R1 Action Args & Progress Absolutization
+def test_watermark_action_args_executes_file_arg_for_dashed_input(tmp_path):
+    from workflows.video import build_add_watermark_flow
+
+    flow = build_add_watermark_flow()
+    step2 = flow.next_step_func(str(tmp_path / "vid.mp4"), flow.state)
+    step3 = step2.next_step_func("-evil.png", step2.state)
+    progress = step3.next_step_func(str(tmp_path / "out.mp4"), step3.state)
+    assert progress.action_args[0] == "-i"
+    assert progress.action_args[1].startswith("/")
+    assert progress.action_args[1].endswith("/-evil.png")
+    assert not progress.action_args[1].startswith("-")
+
+
+def test_extract_subs_transcodes_mov_text_to_srt(monkeypatch):
+    from workflows import video
+
+    monkeypatch.setattr("workflows.video.probe_first_subtitle_codec", lambda _p: "mov_text")
+    flow = video.build_extract_subs_flow()
+    step2 = flow.next_step_func("/tmp/sample.mp4", {})
+    progress = step2.next_step_func("/tmp/sample.srt", step2.state)
+    assert progress.action_args == ["-map", "0:s:0", "-c:s", "srt"]
+
+
+def test_validate_exif_tag_blocks_pseudotags():
+    from config import validate_exif_tag
+
+    with assert_raises(ValueError):
+        validate_exif_tag("FileName")
+
+    with assert_raises(ValueError):
+        validate_exif_tag("Directory")
+
+    assert validate_exif_tag("Artist") == "Artist"
+    assert validate_exif_tag("Copyright") == "Copyright"
+

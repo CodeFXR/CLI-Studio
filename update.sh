@@ -46,7 +46,7 @@ PYTHON_PACKAGES=(
     "textual>=0.85,<10.0"
     "textual-image>=0.10,<2.0"
     "Pillow>=10.0,<15.0"
-    "yt-dlp>=2024.1.1,<2028.0.0"
+    "yt-dlp>=2024.1.1,<2026"
     "natsort>=8.0,<10.0"
 )
 
@@ -59,12 +59,19 @@ fi
 
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${CYAN}${BOLD}Updating CLI-Studio application code...${RESET}"
-    if git -C "$INSTALL_DIR" pull --ff-only; then
-        echo -e "  ${GREEN}Application code updated.${RESET}"
+    git -C "$INSTALL_DIR" fetch --tags -q
+    if git -C "$INSTALL_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
+        if ! git -C "$INSTALL_DIR" pull --ff-only; then
+            echo -e "  ${RED}${BOLD}Error:${RESET} Git pull failed (local edits or non-fast-forward). Resolve it in $INSTALL_DIR and re-run update; Python packages were NOT upgraded." >&2
+            exit 1
+        fi
     else
-        echo -e "  ${RED}${BOLD}Error:${RESET} Git pull failed (local edits or non-fast-forward). Resolve it in $INSTALL_DIR and re-run update; Python packages were NOT upgraded." >&2
-        exit 1
+        LATEST_TAG=$(git -C "$INSTALL_DIR" tag -l 'v*' --sort=-v:refname | head -n1)
+        if [ -n "$LATEST_TAG" ]; then
+            git -C "$INSTALL_DIR" checkout -q "$LATEST_TAG"
+        fi
     fi
+    echo -e "  ${GREEN}Application code updated to $(git -C "$INSTALL_DIR" describe --tags --always).${RESET}"
     echo
 fi
 

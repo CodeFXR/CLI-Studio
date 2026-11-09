@@ -459,14 +459,20 @@ def validate_remote_name(v: str) -> str:
     return v
 
 
+_DISALLOWED_EXIF_TAGS = {"filename", "directory", "filepath", "basefilename"}
+
+
 def validate_exif_tag(v: str) -> str:
-    if not v.strip():
+    cleaned = v.strip()
+    if not cleaned:
         raise ValueError("EXIF tag name cannot be empty.")
-    if not _EXIF_TAG_RE.match(v):
+    if not _EXIF_TAG_RE.match(cleaned):
         raise ValueError(
-            f"Invalid EXIF tag '{v}'. Start with a letter; use letters, digits, '.', '_', '-', or ':'."
+            f"Invalid EXIF tag '{cleaned}'. Start with a letter; use letters, digits, '.', '_', '-', or ':'."
         )
-    return v
+    if cleaned.lower() in _DISALLOWED_EXIF_TAGS:
+        raise ValueError(f"Setting pseudo-tag '{cleaned}' is not permitted.")
+    return cleaned
 
 
 def validate_cache_dir(v: str) -> str:
@@ -474,6 +480,8 @@ def validate_cache_dir(v: str) -> str:
         return ""
     expanded = os.path.realpath(os.path.expanduser(v))
     home_dir = os.path.realpath(os.path.expanduser("~"))
+    if home_dir == "/":
+        raise ValueError("Cache directory cannot be configured when home directory is root.")
     allowed_roots = [
         home_dir,
         os.path.realpath("/tmp"),

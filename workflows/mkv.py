@@ -48,43 +48,58 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
     """Enumerate attachments in an MKV (fonts, images, etc.).
 
     Queries mkvmerge -J to retrieve the exact native Matroska attachment IDs
-    used by mkvextract. If mkvmerge is unavailable or reports no attachments,
-    falls back to ffprobe stream enumeration with 1-based sequential attachment indexing.
-    Returns a list of dicts: {"index": int, "filename": str, "mimetype": str, "size": int}
-    (with optional "id" if reported by mkvmerge).
+    required by mkvextract. Only entries that carry a valid integer attachment
+    id are included with their id set.
+
+    If mkvmerge is not installed on the system (FileNotFoundError), falls back to ffprobe
+    to discover attachment filenames and metadata for UI display, with
+    "id" set to None so mkvextract is never invoked with fabricated IDs.
+    Returns a list of dicts: {"id": int | None, "filename": str, "mimetype": str, "size": int}.
     """
     cmd_mkv = ["mkvmerge", "-J", file_arg(mkv_path)]
     try:
         res = subprocess.run(cmd_mkv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
-        if res.returncode == 0:
-            data = json.loads(res.stdout)
-            raw_atts = data.get("attachments", [])
-            if raw_atts:
-                out = []
-                for idx, att in enumerate(raw_atts, 1):
-                    fn = att.get("filename") or att.get("file_name") or f"attachment_{idx}"
-                    mt = att.get("mimetype") or att.get("content_type", "")
-                    sz = int(att.get("size", 0) or 0)
-                    index_val = att.get("index")
-                    id_val = att.get("id")
-                    item: dict = {
-                        "filename": fn,
-                        "mimetype": mt,
-                        "size": sz,
-                    }
-                    if id_val is not None:
-                        item["id"] = int(id_val)
-                        item["index"] = int(index_val if index_val is not None else id_val)
-                    elif index_val is not None:
-                        item["index"] = int(index_val)
-                    else:
-                        item["id"] = idx
-                        item["index"] = idx
-                    out.append(item)
-                return out
+    except FileNotFoundError:
+        # mkvmerge is not installed on this system; fall back to ffprobe for display-only
+        res = None
     except Exception:
-        pass
+        # Timeouts, OS errors, etc. when mkvmerge is present return empty, never fall back
+        return []
 
+    if res is not None:
+        if res.returncode != 0:
+            return []
+        try:
+            data = json.loads(res.stdout)
+        except json.JSONDecodeError:
+            return []
+        raw_atts = data.get("attachments", [])
+        out = []
+        for att in raw_atts:
+            id_val = att.get("id")
+            if id_val is None:
+                continue
+            try:
+                int_id = int(id_val)
+            except (ValueError, TypeError):
+                continue
+            fn = att.get("filename") or att.get("file_name") or f"attachment_{int_id}"
+            mt = att.get("mimetype") or att.get("content_type", "")
+            try:
+                sz = int(att.get("size", 0) or 0)
+            except (ValueError, TypeError):
+                sz = 0
+            out.append(
+                {
+                    "id": int_id,
+                    "filename": fn,
+                    "mimetype": mt,
+                    "size": sz,
+                }
+            )
+        return out
+
+    # Fallback to ffprobe ONLY when mkvmerge binary is not found (display only, id=None)
     cmd = [
         "ffprobe",
         "-v",
@@ -96,13 +111,13 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         file_arg(mkv_path),
     ]
     try:
-        res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+        res_ff = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
-    if res.returncode != 0:
+    if res_ff.returncode != 0:
         return []
     try:
-        data = json.loads(res.stdout)
+        data = json.loads(res_ff.stdout)
     except json.JSONDecodeError:
         return []
 
@@ -119,22 +134,13 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
                 size = 0
             attachments.append(
                 {
-                    "id": att_idx,
-                    "index": att_idx,
+                    "id": None,
                     "filename": filename,
                     "mimetype": mimetype,
                     "size": size,
                 }
             )
             att_idx += 1
-
-    if not attachments and "attachments" in data:
-        for idx, att in enumerate(data.get("attachments", []), 1):
-            if isinstance(att, dict):
-                att_copy = dict(att)
-                att_copy.setdefault("id", idx)
-                att_copy.setdefault("index", idx)
-                attachments.append(att_copy)
 
     return attachments
 
@@ -293,9 +299,8 @@ def build_add_subtitles_to_mkv_flow():
 def build_extract_mkv_attachments_flow():
     """Extract attachments (fonts, images) from an MKV using mkvextract attachments.
 
-    Pre-flights with ffprobe to enumerate attachments; outputs are saved with
-    their original filenames into a chosen directory. Indexed by position
-    (mkvextract positions are positional within the attachments array).
+    Pre-flights with mkvmerge -J to enumerate attachments and their native Matroska IDs;
+    outputs are saved with their sanitized filenames into a chosen directory.
     """
 
     def step2(in_file, state):
@@ -337,7 +342,7 @@ def build_extract_mkv_attachments_flow():
             used_names.add(candidate.lower())
             if os.path.commonpath([expanded_out_dir, out_file]) != expanded_out_dir:
                 out_file = os.path.join(expanded_out_dir, f"attachment_{idx}")
-            att_id = att.get("id") if att.get("id") is not None else att.get("index")
+            att_id = att.get("id")
             if not isinstance(att_id, int):
                 continue
             cmds.append(["mkvextract", "attachments", in_abs, f"{att_id}:{out_file}"])

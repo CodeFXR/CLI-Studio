@@ -857,12 +857,12 @@ def test_build_extract_mkv_attachments_flow_one_cmd_per_attachment(monkeypatch):
         "workflows.mkv._probe_attachments",
         lambda _p: [
             {
-                "index": 0,
+                "id": 4,
                 "filename": "MyFont.ttf",
                 "mimetype": "application/x-truetype-font",
                 "size": 12345,
             },
-            {"index": 1, "filename": "Cover.jpg", "mimetype": "image/jpeg", "size": 67890},
+            {"id": 9, "filename": "Cover.jpg", "mimetype": "image/jpeg", "size": 67890},
         ],
     )
     monkeypatch.setattr("os.makedirs", lambda *a, **kw: None)
@@ -875,9 +875,10 @@ def test_build_extract_mkv_attachments_flow_one_cmd_per_attachment(monkeypatch):
     cmd0 = result.cmds[0]
     assert cmd0[0] == "mkvextract"
     assert cmd0[1] == "attachments"
-    assert "0:" + "/tmp/attachments" in " ".join(cmd0)
+    assert "4:" + "/tmp/attachments" in " ".join(cmd0)
     assert "MyFont.ttf" in " ".join(cmd0)
     cmd1 = result.cmds[1]
+    assert "9:" + "/tmp/attachments" in " ".join(cmd1)
     assert "Cover.jpg" in " ".join(cmd1)
 
 
@@ -909,7 +910,7 @@ def test_probe_attachments_parses_valid_output(monkeypatch):
         returncode = 0
         stdout = (
             '{"attachments": ['
-            '{"index": 0, "filename": "MyFont.ttf", "mimetype": "application/x-truetype-font", "size": 12345}'
+            '{"id": 7, "file_name": "MyFont.ttf", "content_type": "application/x-truetype-font", "size": 12345}'
             "]}"
         )
         stderr = ""
@@ -917,7 +918,7 @@ def test_probe_attachments_parses_valid_output(monkeypatch):
     monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeRes())
     assert mkv._probe_attachments("/tmp/anything.mkv") == [
         {
-            "index": 0,
+            "id": 7,
             "filename": "MyFont.ttf",
             "mimetype": "application/x-truetype-font",
             "size": 12345,
@@ -929,27 +930,32 @@ def test_probe_attachments_parses_native_ffprobe_streams(monkeypatch):
     import json
     from workflows import mkv
 
-    class FakeRes:
-        returncode = 0
-        stdout = json.dumps({
-            "streams": [
-                {"index": 0, "codec_type": "video"},
-                {
-                    "index": 1,
-                    "codec_type": "attachment",
-                    "tags": {
-                        "filename": "font.ttf",
-                        "mimetype": "font/ttf",
-                        "NUMBER_OF_BYTES": "54321",
+    def fake_run(cmd, *a, **kw):
+        if cmd[0] == "mkvmerge":
+            raise FileNotFoundError("mkvmerge not found")
+        class FakeRes:
+            returncode = 0
+            stdout = json.dumps({
+                "streams": [
+                    {"index": 0, "codec_type": "video"},
+                    {
+                        "index": 1,
+                        "codec_type": "attachment",
+                        "tags": {
+                            "filename": "font.ttf",
+                            "mimetype": "font/ttf",
+                            "NUMBER_OF_BYTES": "54321",
+                        },
                     },
-                },
-            ]
-        })
-        stderr = ""
+                ]
+            })
+            stderr = ""
+        return FakeRes()
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **kw: FakeRes())
+    monkeypatch.setattr("subprocess.run", fake_run)
     res = mkv._probe_attachments("/tmp/test.mkv")
     assert len(res) == 1
+    assert res[0]["id"] is None
     assert res[0]["filename"] == "font.ttf"
     assert res[0]["mimetype"] == "font/ttf"
     assert res[0]["size"] == 54321

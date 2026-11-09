@@ -40,7 +40,7 @@ class _BaseInputModal(ModalScreen):
             next_screen = self.next_step_func(val, self.state)
         except ValueError as exc:
             msg = str(exc).strip()
-            if not msg or "invalid literal" in msg or "could not convert" in msg:
+            if not msg or msg.startswith("invalid literal") or msg.startswith("could not convert"):
                 self.app.notify("Invalid input. Check the format and try again.", severity="error")
             else:
                 self.app.notify(f"Invalid input: {msg}", severity="error")
