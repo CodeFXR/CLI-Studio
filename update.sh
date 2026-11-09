@@ -59,10 +59,11 @@ fi
 
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${CYAN}${BOLD}Updating CLI-Studio application code...${RESET}"
-    if git -C "$INSTALL_DIR" pull --ff-only --quiet 2>/dev/null; then
+    if git -C "$INSTALL_DIR" pull --ff-only; then
         echo -e "  ${GREEN}Application code updated.${RESET}"
     else
-        echo -e "  ${YELLOW}Notice: Git pull skipped (local edits or non-fast-forward).${RESET}"
+        echo -e "  ${RED}${BOLD}Error:${RESET} Git pull failed (local edits or non-fast-forward). Resolve it in $INSTALL_DIR and re-run update; Python packages were NOT upgraded." >&2
+        exit 1
     fi
     echo
 fi
@@ -71,10 +72,14 @@ echo -e "${CYAN}${BOLD}Updating CLI-Studio Python packages...${RESET}"
 echo
 
 source "$VENV_DIR/bin/activate"
-pip install --upgrade "${PYTHON_PACKAGES[@]}"
+if [ -f "$INSTALL_DIR/requirements.txt" ]; then
+    pip install --upgrade -r "$INSTALL_DIR/requirements.txt"
+else
+    pip install --upgrade "${PYTHON_PACKAGES[@]}"
+fi
 echo
 echo -e "${BOLD}Updating optional Python packages (ffmpeg-normalize, gallery-dl)...${RESET}"
-if pip install --quiet --upgrade ffmpeg-normalize gallery-dl; then
+if pip install --quiet --upgrade "ffmpeg-normalize>=1.27,<2.0" "gallery-dl>=1.26,<2.0"; then
     :
 else
     echo -e "${YELLOW}Warning:${RESET} Optional Python packages failed to install."

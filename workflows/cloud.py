@@ -1,7 +1,7 @@
 import os
 import subprocess
 
-from config import validate_remote_name
+from config import validate_remote_name, validate_remote_path
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -10,6 +10,7 @@ from textual.worker import get_current_worker
 
 from ui.progress import GenericCliProgressScreen, _LoggingModalScreen
 from ui.screens import FilePickerScreen, TextInputScreen
+from workflows.utils import open_output_nofollow
 
 
 def build_rclone_copy_flow():
@@ -34,7 +35,7 @@ def build_rclone_copy_flow():
         )
 
     def step4(remote_path, state):
-        state["remote_path"] = remote_path
+        state["remote_path"] = validate_remote_path(remote_path)
         expanded_local = os.path.abspath(os.path.expanduser(state["local_path"]))
         cmd = [
             "rclone",
@@ -70,6 +71,14 @@ class _RcloneListRemotesScreen(_LoggingModalScreen):
                 os.makedirs(target_dir, exist_ok=True)
             except OSError:
                 pass
+        if os.path.islink(self.target):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Target cannot be a symlink: {escape(self.target)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
         try:
             result = subprocess.run(
                 ["rclone", "listremotes", "--long"],
@@ -106,19 +115,8 @@ class _RcloneListRemotesScreen(_LoggingModalScreen):
             )
             self.app.call_from_thread(self.safe_dismiss)
             return
-        if os.path.islink(self.target):
-            self.app.call_from_thread(
-                self.app.notify,
-                f"Target cannot be a symlink: {escape(self.target)}",
-                severity="error",
-            )
-            self.app.call_from_thread(self.safe_dismiss)
-            return
-
         try:
-            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(self.target, flags, 0o644)
-            with open(fd, "w", encoding="utf-8") as handle:
+            with open_output_nofollow(self.target) as handle:
                 handle.write(result.stdout)
         except OSError as exc:
             self.app.call_from_thread(

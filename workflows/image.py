@@ -211,11 +211,36 @@ def build_imagemagick_filter_flow():
 
 def build_exiftool_strip_flow():
     def step2(in_file, state):
-        if not in_file or not in_file.strip() or _is_sensitive_path(in_file):
-            return None
+        if not in_file or not in_file.strip():
+            raise ValueError("No file or directory selected.")
+        if _is_sensitive_path(in_file):
+            raise ValueError(
+                f"Strip Metadata is blocked for protected location '{in_file}'."
+            )
         expanded_in = os.path.abspath(os.path.expanduser(in_file))
-        cmd = ["exiftool", "-overwrite_original", "-all=", expanded_in]
-        return GenericCliProgressScreen(cmd, "ExifTool", in_file)
+        state["strip_target"] = expanded_in
+        if os.path.isdir(expanded_in):
+            count = sum(
+                1
+                for f in os.listdir(expanded_in)
+                if os.path.isfile(os.path.join(expanded_in, f))
+            )
+        else:
+            count = 1
+        state["strip_count"] = count
+        return OptionSelectScreen(
+            f"Strip ALL metadata from {count} file(s) in {expanded_in}? "
+            "Each original is kept as a *_original backup.",
+            ["Yes - strip metadata (backups kept)", "Cancel"],
+            state,
+            step3,
+        )
+
+    def step3(choice, state):
+        if not choice.startswith("Yes"):
+            return None
+        cmd = ["exiftool", "-all=", "--", state["strip_target"]]
+        return GenericCliProgressScreen(cmd, "ExifTool", state["strip_target"])
 
     return FilePickerScreen("Select Media File/Dir:", "", {}, step2)
 
@@ -354,6 +379,7 @@ def build_set_exif_tag_flow():
             "exiftool",
             "-overwrite_original",
             f"-{state['tag']}={state['value']}",
+            "--",
             expanded_in,
         ]
         return GenericCliProgressScreen(cmd, "ExifTool", expanded_in)
@@ -375,6 +401,7 @@ def build_copy_exif_flow():
                 "-tagsFromFile",
                 os.path.abspath(os.path.expanduser(s["in_file"])),
                 "-all:all",
+                "--",
                 os.path.abspath(os.path.expanduser(s["second_file"])),
             ]
         ),
@@ -425,6 +452,7 @@ def build_rename_by_exif_date_flow():
                     "-d",
                     "%Y-%m-%d_%H%M%S",
                     "-FileName<DateTimeOriginal",
+                    "--",
                     in_f,
                 ]
             )

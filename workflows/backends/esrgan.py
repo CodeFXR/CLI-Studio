@@ -1,4 +1,5 @@
 from workflows.backends.base import Backend
+from workflows.utils import file_arg
 
 
 class EsrganBackend(Backend):
@@ -33,9 +34,9 @@ class EsrganBackend(Backend):
         command = [
             self.executable,
             "-i",
-            input_path,
+            file_arg(input_path),
             "-o",
-            output_path,
+            file_arg(output_path),
             "-n",
             selected_model,
             "-s",

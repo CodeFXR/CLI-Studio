@@ -4,7 +4,12 @@ from config import _load_full_config, validate_decimal, validate_resolution
 from ui.progress import FfmpegProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.shared import file_file_in_out_flow, file_in_out_flow
-from workflows.utils import probe_first_subtitle_codec, subtitle_ext_for_codec
+from workflows.utils import (
+    escape_subtitles_filter_arg,
+    file_arg,
+    probe_first_subtitle_codec,
+    subtitle_ext_for_codec,
+)
 
 
 _CODEC_FORMATS = ["mp4", "mkv", "avi", "webm", "mov"]
@@ -55,20 +60,7 @@ def _resolve_encoder(choice: str) -> str:
 
 
 def _burn_subs_filter_arg(sub_path: str) -> str:
-    expanded = os.path.abspath(os.path.expanduser(sub_path))
-    res = []
-    for ch in expanded:
-        if ch == "\\":
-            res.append("\\\\\\\\")
-        elif ch == "'":
-            res.append("\\\\\\'")
-        elif ch == ":":
-            res.append("\\\\:")
-        elif ch in (",", "[", "]", ";", " ", "\"", "="):
-            res.append("\\" + ch)
-        else:
-            res.append(ch)
-    return f"subtitles=filename={''.join(res)}:si=0"
+    return escape_subtitles_filter_arg(sub_path)
 
 
 def build_burn_subtitles_flow():
@@ -309,7 +301,7 @@ def build_add_watermark_flow():
         save_suffix="_watermarked{ext}",
         action_args=lambda s: [
             "-i",
-            s["second_file"],
+            file_arg(s["second_file"]),
             "-filter_complex",
             "overlay=W-w-10:H-h-10",
         ],
@@ -324,7 +316,7 @@ def build_add_audio_track_flow():
         save_suffix="_mixed{ext}",
         action_args=lambda s: [
             "-i",
-            s["second_file"],
+            file_arg(s["second_file"]),
             "-c:v",
             "copy",
             "-c:a",

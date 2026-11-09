@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from natsort import natsorted
 
 from workflows.backends.base import Backend
-from workflows.utils import IMAGE_EXTENSIONS
+from workflows.utils import IMAGE_EXTENSIONS, file_arg
 
 
 class ImageMagickBackend(Backend):
@@ -21,7 +21,7 @@ class ImageMagickBackend(Backend):
         output_path: str,
         arguments: Sequence[str] = (),
     ) -> list[str]:
-        return [self.executable, input_path, *arguments, output_path]
+        return [self.executable, file_arg(input_path), *arguments, file_arg(output_path)]
 
     def build_cmd(
         self,
@@ -75,10 +75,10 @@ class ImageMagickBackend(Backend):
         return [
             self.executable,
             "montage",
-            *input_files,
+            *[file_arg(f) for f in input_files],
             "-tile",
             tile,
             "-geometry",
             "+0+0",
-            output_path,
+            file_arg(output_path),
         ]

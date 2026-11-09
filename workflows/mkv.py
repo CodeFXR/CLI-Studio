@@ -5,7 +5,7 @@ import subprocess
 from natsort import natsorted
 from ui.screens import FilePickerScreen, OptionSelectScreen
 from ui.progress import GenericCliProgressScreen
-from workflows.utils import abspath
+from workflows.utils import abspath, file_arg
 
 
 def _probe_subtitle_tracks(mkv_path: str) -> list[dict]:
@@ -19,7 +19,8 @@ def _probe_subtitle_tracks(mkv_path: str) -> list[dict]:
         "stream=index,codec_name:stream_tags=language",
         "-of",
         "json",
-        mkv_path,
+        "--",
+        file_arg(mkv_path),
     ]
     try:
         res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
@@ -52,7 +53,7 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
     Returns a list of dicts: {"index": int, "filename": str, "mimetype": str, "size": int}
     (with optional "id" if reported by mkvmerge).
     """
-    cmd_mkv = ["mkvmerge", "-J", mkv_path]
+    cmd_mkv = ["mkvmerge", "-J", file_arg(mkv_path)]
     try:
         res = subprocess.run(cmd_mkv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
         if res.returncode == 0:
@@ -91,7 +92,8 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         "-show_streams",
         "-of",
         "json",
-        mkv_path,
+        "--",
+        file_arg(mkv_path),
     ]
     try:
         res = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
@@ -311,7 +313,7 @@ def build_extract_mkv_attachments_flow():
         attachments = state["attachments"]
         if not attachments:
             return None
-        in_abs = abspath(state["in_file"])
+        in_abs = file_arg(state["in_file"])
         expanded_out_dir = abspath(out_dir)
         os.makedirs(expanded_out_dir, exist_ok=True)
         cmds = []
@@ -335,7 +337,9 @@ def build_extract_mkv_attachments_flow():
             used_names.add(candidate.lower())
             if os.path.commonpath([expanded_out_dir, out_file]) != expanded_out_dir:
                 out_file = os.path.join(expanded_out_dir, f"attachment_{idx}")
-            att_id = att.get("id", att.get("index", idx))
+            att_id = att.get("id") if att.get("id") is not None else att.get("index")
+            if not isinstance(att_id, int):
+                continue
             cmds.append(["mkvextract", "attachments", in_abs, f"{att_id}:{out_file}"])
         if not cmds:
             return None

@@ -1,6 +1,7 @@
 import os
 from ui.screens import FilePickerScreen, OptionSelectScreen
 from ui.progress import GenericCliProgressScreen
+from workflows.utils import file_arg
 
 
 _HANDBRAKE_PRESETS = [
@@ -39,8 +40,8 @@ def build_handbrake_preset_flow():
         )
 
     def step4(out_file, state):
-        expanded_in = os.path.abspath(os.path.expanduser(state["in_file"]))
-        expanded_out = os.path.abspath(os.path.expanduser(out_file))
+        expanded_in = file_arg(state["in_file"])
+        expanded_out = file_arg(out_file)
         cmd = [
             "HandBrakeCLI",
             "-i",
@@ -63,7 +64,7 @@ def build_handbrake_list_presets_flow():
     """
 
     def step2(out_file, state):
-        expanded_out = os.path.abspath(os.path.expanduser(out_file))
+        expanded_out = file_arg(out_file)
         cmd = ["HandBrakeCLI", "--preset-list", "--no-dvdnav"]
         return GenericCliProgressScreen(cmd, "HandBrakeCLI", expanded_out, out_file=expanded_out)
 

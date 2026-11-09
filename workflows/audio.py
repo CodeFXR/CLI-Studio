@@ -4,6 +4,7 @@ from config import validate_decimal
 from ui.progress import FfmpegProgressScreen, GenericCliProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen
 from workflows.shared import file_file_in_out_flow, file_in_out_flow
+from workflows.utils import file_arg
 
 
 def build_change_volume_flow():
@@ -86,7 +87,7 @@ def build_mix_audio_flow():
         save_suffix="_mixed{ext}",
         action_args=lambda s: [
             "-i",
-            s["second_file"],
+            file_arg(s["second_file"]),
             "-filter_complex",
             "amix=inputs=2:duration=longest",
         ],

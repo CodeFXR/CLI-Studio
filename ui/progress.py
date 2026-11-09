@@ -3,6 +3,7 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from typing import Any, cast
@@ -19,12 +20,86 @@ from textual.widgets import Label, ProgressBar
 from textual.worker import get_current_worker
 
 from workflows.backends import PillowBackend, YtDlpBackend, get_backend
-from workflows.utils import unique_path
+from workflows.utils import open_output_nofollow, unique_path
 
 Image.MAX_IMAGE_PIXELS = 50_000_000
 
+_MAX_IMAGE_PIXELS_LIMIT = 100_000_000
+_MAX_PDF_PAGES = 100
+_MAX_PDF_TOTAL_PIXELS = 150_000_000
+
 _ACTIVE_PROCESS_GROUPS: set[int] = set()
 _PG_LOCK = threading.Lock()
+
+_TERM_GRACE_SECONDS = 1.5
+
+_KILL_LOCKS: dict[int, threading.Lock] = {}
+_KILL_LOCKS_GUARD = threading.Lock()
+
+
+def _kill_lock_for(proc: subprocess.Popen[Any]) -> threading.Lock:
+    with _KILL_LOCKS_GUARD:
+        return _KILL_LOCKS.setdefault(id(proc), threading.Lock())
+
+
+def _verified_pgid(proc: subprocess.Popen[Any]) -> int | None:
+    pid = getattr(proc, "pid", None)
+    if not pid or pid <= 0:
+        return None
+    if hasattr(os, "getpgid"):
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            return None
+        return pgid if pgid == pid else None
+    return None
+
+
+def _signal_group_or_process(proc: subprocess.Popen[Any], pgid: int | None, sig: int) -> None:
+    try:
+        if pgid is not None and hasattr(os, "killpg"):
+            os.killpg(pgid, sig)
+        elif sig == signal.SIGKILL:
+            proc.kill()
+        else:
+            proc.terminate()
+    except (ProcessLookupError, OSError):
+        pass
+
+
+def terminate_process(proc: subprocess.Popen[Any] | None, grace: float = _TERM_GRACE_SECONDS) -> bool:
+    if not proc:
+        return False
+    lock = _kill_lock_for(proc)
+    with lock:
+        try:
+            if proc.poll() is not None:
+                _unregister_process_group(getattr(proc, "pid", None))
+                return False
+            pgid = _verified_pgid(proc)
+            _signal_group_or_process(proc, pgid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                _signal_group_or_process(proc, pgid, signal.SIGKILL)
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                try:
+                    proc.wait(timeout=0.5)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            _unregister_process_group(getattr(proc, "pid", None))
+            return True
+        finally:
+            with _KILL_LOCKS_GUARD:
+                _KILL_LOCKS.pop(id(proc), None)
+
+
+_kill_process_group = terminate_process
 
 
 def _register_process_group(pgid: int | None) -> None:
@@ -68,25 +143,23 @@ def cleanup_active_process_groups() -> None:
         except (ProcessLookupError, OSError):
             pass
 
-    deadline = time.monotonic() + 0.5
-    while time.monotonic() < deadline:
-        survivors = []
-        for pgid in alive:
-            if hasattr(os, "killpg"):
-                try:
+    deadline = time.monotonic() + _TERM_GRACE_SECONDS
+    remaining = list(alive)
+    while remaining and time.monotonic() < deadline:
+        still_alive = []
+        for pgid in remaining:
+            try:
+                if hasattr(os, "killpg"):
                     os.killpg(pgid, 0)
-                    survivors.append(pgid)
-                except (ProcessLookupError, OSError):
-                    pass
-            else:
-                survivors.append(pgid)
-        alive = survivors
-        if not alive:
-            break
-        time.sleep(0.05)
+                    still_alive.append(pgid)
+            except (ProcessLookupError, OSError):
+                pass
+        remaining = still_alive
+        if remaining:
+            time.sleep(0.05)
 
     with _PG_LOCK:
-        for pgid in alive:
+        for pgid in remaining:
             try:
                 if hasattr(os, "killpg"):
                     os.killpg(pgid, signal.SIGKILL)
@@ -104,75 +177,6 @@ def _ffmpeg_overwrite_flag() -> str:
         default=True,
     )
     return "-y" if overwrite else "-n"
-
-
-def _kill_process_group(proc: subprocess.Popen | None, timeout: float = 1.0) -> None:
-    """Terminate an entire process group gracefully (SIGTERM) then forcefully (SIGKILL).
-
-    Monitors the process group as a whole using os.killpg(pgid, 0), ensuring that if the
-    leader process exits before its spawned children or grandchildren, escalation to
-    SIGKILL is never skipped.
-    """
-    if not proc:
-        return
-    pgid = getattr(proc, "pid", None)
-    if pgid is None:
-        return
-
-    # Phase 1: Graceful SIGTERM
-    try:
-        if hasattr(os, "killpg"):
-            os.killpg(pgid, signal.SIGTERM)
-        else:
-            proc.terminate()
-    except (ProcessLookupError, OSError):
-        pass
-
-    # Wait grace period while monitoring the process group
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        proc.poll()
-        group_alive = False
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(pgid, 0)
-                group_alive = True
-            except (ProcessLookupError, OSError):
-                group_alive = False
-        elif proc.poll() is None:
-            group_alive = True
-
-        if not group_alive:
-            _unregister_process_group(pgid)
-            return
-        time.sleep(0.05)
-
-    # Phase 2: Forceful SIGKILL to eliminate stubborn descendants
-    try:
-        if hasattr(os, "killpg"):
-            os.killpg(pgid, signal.SIGKILL)
-        else:
-            proc.kill()
-    except (ProcessLookupError, OSError):
-        pass
-
-    try:
-        proc.kill()
-    except Exception:
-        pass
-
-    # Reaping drain loop
-    drain_deadline = time.monotonic() + 0.2
-    while time.monotonic() < drain_deadline:
-        proc.poll()
-        if hasattr(os, "killpg"):
-            try:
-                os.killpg(pgid, 0)
-            except (ProcessLookupError, OSError):
-                break
-        time.sleep(0.02)
-
-    _unregister_process_group(pgid)
 
 
 class _LoggingModalScreen(ModalScreen[Any]):
@@ -225,22 +229,20 @@ class _LoggingModalScreen(ModalScreen[Any]):
             except Exception:
                 pass
 
-    def _dispatch_cancel(self, proc: subprocess.Popen | None) -> None:
+    def _request_kill(self, proc: subprocess.Popen[Any] | None) -> None:
+        if not proc or proc.poll() is not None:
+            return
+        threading.Thread(
+            target=terminate_process, args=(proc,), daemon=False, name="cli-studio-kill"
+        ).start()
+
+    def _dispatch_cancel(self, proc: subprocess.Popen[Any] | None) -> None:
         self._cancel_event.set()
-        with self._kill_lock:
-            if not self._kill_dispatched:
-                self._kill_dispatched = True
-                if proc:
-                    threading.Thread(
-                        target=_kill_process_group,
-                        args=(proc,),
-                        daemon=True,
-                        name="process-killer",
-                    ).start()
+        self._request_kill(proc)
         self.safe_dismiss()
 
-    def _kill_process_group(self, proc: subprocess.Popen | None, timeout: float = 1.0) -> None:
-        _kill_process_group(proc, timeout=timeout)
+    def _kill_process_group(self, proc: subprocess.Popen[Any] | None, timeout: float = _TERM_GRACE_SECONDS) -> None:
+        terminate_process(proc, grace=timeout)
 
     def write_log(self, text):
         try:
@@ -273,6 +275,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
         remote_components: str = "",
         is_audio: bool = False,
         is_playlist: bool = False,
+        config_warnings: tuple = (),
     ):
         super().__init__()
         self.url = url
@@ -281,6 +284,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
         self.remote_components = remote_components
         self.is_audio = is_audio
         self.is_playlist = is_playlist
+        self.config_warnings = tuple(config_warnings or ())
         self.process: subprocess.Popen[Any] | None = None
         self.progress_bar: ProgressBar | None = None
 
@@ -292,10 +296,14 @@ class DownloadProgressScreen(_LoggingModalScreen):
 
     def on_mount(self) -> None:
         self.progress_bar = self.query_one(ProgressBar)
+        for warning in self.config_warnings:
+            self.app.notify(warning, severity="warning")
         self.run_worker(self.run_ytdlp, exclusive=True, thread=True)
 
     def action_cancel_download(self):
-        self._dispatch_cancel(self.process)
+        self._cancelled = True
+        self._request_kill(self.process)
+        self.safe_dismiss()
         self.app.notify("Download Cancelled", severity="warning")
 
     def run_ytdlp(self):
@@ -303,6 +311,14 @@ class DownloadProgressScreen(_LoggingModalScreen):
         bar = self.progress_bar
 
         expanded_path = os.path.abspath(os.path.expanduser(self.save_path))
+        if os.path.islink(expanded_path):
+            self.app.call_from_thread(
+                self.app.notify,
+                f"Download directory cannot be a symbolic link: {escape(expanded_path)}",
+                severity="error",
+            )
+            self.app.call_from_thread(self.safe_dismiss)
+            return
         if not os.path.exists(expanded_path):
             try:
                 os.makedirs(expanded_path)
@@ -345,6 +361,17 @@ class DownloadProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
+            if self._cancelled or (worker and worker.is_cancelled):
+                proc = self.process
+                self._kill_process_group(proc)
+                if proc.stdout:
+                    try:
+                        proc.stdout.close()
+                    except Exception:
+                        pass
+                self.process = None
+                self.app.call_from_thread(self.safe_dismiss)
+                return
         except FileNotFoundError:
             self.app.call_from_thread(
                 self.app.notify, "yt-dlp not found. Please install it.", severity="error"
@@ -382,7 +409,10 @@ class DownloadProgressScreen(_LoggingModalScreen):
                         except ValueError:
                             pass
 
-                proc.wait()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    terminate_process(proc)
                 if proc.returncode == 0:
                     self.app.call_from_thread(self.app.notify, "Download Complete!", severity="information")
                 elif proc.returncode not in (-9, -15) and not (self._cancelled or (worker and worker.is_cancelled)):
@@ -425,7 +455,9 @@ class FfmpegProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_ffmpeg, exclusive=True, thread=True)
 
     def action_cancel_process(self):
-        self._dispatch_cancel(self.process)
+        self._cancelled = True
+        self._request_kill(self.process)
+        self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_ffmpeg(self):
@@ -496,14 +528,29 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                         stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.PIPE,
+                        text=True,
                         start_new_session=True,
                     )
                     _register_process_group(self.process.pid)
                     if self._cancelled or (worker and worker.is_cancelled):
-                        self._kill_process_group(self.process)
+                        proc = self.process
+                        self._kill_process_group(proc)
+                        if proc.stdout:
+                            try:
+                                proc.stdout.close()
+                            except Exception:
+                                pass
+                        self.process = None
                         break
-                    _, stderr = self.process.communicate()
-                    rc = self.process.returncode
+                    proc = self.process
+                    while True:
+                        try:
+                            proc.communicate(timeout=0.25)
+                            break
+                        except subprocess.TimeoutExpired:
+                            if self._cancelled or (worker and worker.is_cancelled):
+                                self._kill_process_group(proc)
+                    rc = self.process.returncode if self.process else 1
                 except Exception:
                     rc = 1
                 finally:
@@ -568,6 +615,17 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                 start_new_session=True,
             )
             _register_process_group(self.process.pid)
+            if self._cancelled or (worker and worker.is_cancelled):
+                proc = self.process
+                self._kill_process_group(proc)
+                if proc.stdout:
+                    try:
+                        proc.stdout.close()
+                    except Exception:
+                        pass
+                self.process = None
+                self.app.call_from_thread(self.safe_dismiss)
+                return
             self.app.call_from_thread(
                 self.write_log, self._log_msg("executing", escape(" ".join(cmd)))
             )
@@ -597,7 +655,10 @@ class FfmpegProgressScreen(_LoggingModalScreen):
                         self._kill_process_group(proc)
                         break
 
-                proc.wait()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    terminate_process(proc)
                 if proc.returncode == 0:
                     self.app.call_from_thread(
                         self.app.notify, "Processing Complete!", severity="information"
@@ -644,7 +705,9 @@ class GenericCliProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_cmd, exclusive=True, thread=True)
 
     def action_cancel_process(self):
-        self._dispatch_cancel(self.process)
+        self._cancelled = True
+        self._request_kill(self.process)
+        self.safe_dismiss()
         self.app.notify("Process Cancelled", severity="warning")
 
     def run_cmd(self):
@@ -654,6 +717,11 @@ class GenericCliProgressScreen(_LoggingModalScreen):
             worker = None
 
         if not self.cmds:
+            self.app.call_from_thread(
+                self.app.notify,
+                "Nothing to run: no commands were built for this selection.",
+                severity="warning",
+            )
             self.app.call_from_thread(self.safe_dismiss)
             return
 
@@ -701,6 +769,16 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     start_new_session=True,
                 )
                 _register_process_group(self.process.pid)
+                if self._cancelled or (worker and worker.is_cancelled):
+                    proc = self.process
+                    self._kill_process_group(proc)
+                    if proc.stdout:
+                        try:
+                            proc.stdout.close()
+                        except Exception:
+                            pass
+                    self.process = None
+                    break
             except FileNotFoundError:
                 self.app.call_from_thread(
                     self.app.notify,
@@ -738,7 +816,10 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                             self._kill_process_group(proc)
                             break
 
-                    proc.wait()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        terminate_process(proc)
                     rc = proc.returncode
                     if rc != 0 and rc not in (-9, -15) and not self._cancelled:
                         failures.append(cmd[-1])
@@ -764,7 +845,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
         if self.out_file and captured_output and not self._cancelled:
             try:
                 out_path = os.path.abspath(os.path.expanduser(self.out_file))
-                if os.path.islink(out_path) or (os.path.lexists(out_path) and not os.path.exists(out_path)):
+                if os.path.islink(out_path):
                     self.app.call_from_thread(
                         self.app.notify,
                         f"Output cannot be a symbolic link: {escape(out_path)}",
@@ -772,9 +853,7 @@ class GenericCliProgressScreen(_LoggingModalScreen):
                     )
                 else:
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-                    fd = os.open(out_path, flags, 0o644)
-                    with open(fd, "w", encoding="utf-8") as f:
+                    with open_output_nofollow(out_path) as f:
                         f.writelines(captured_output)
             except Exception as e:
                 self.app.call_from_thread(
@@ -844,60 +923,86 @@ class PillowProgressScreen(_LoggingModalScreen):
             try:
                 if os.path.islink(expanded_out):
                     raise ValueError(f"Output path cannot be a symbolic link: {expanded_out}")
-                if os.path.isdir(expanded_in):
-                    files = [
-                        f
-                        for f in os.listdir(expanded_in)
-                        if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
-                    ]
-                    files = natsorted(files)
-                    if not files:
+                out_dir = os.path.dirname(os.path.abspath(expanded_out)) or "."
+                os.makedirs(out_dir, exist_ok=True)
+                fd, tmp_pdf = tempfile.mkstemp(dir=out_dir, prefix=".cli-studio-pdf-", suffix=".tmp")
+                os.close(fd)
+                try:
+                    if os.path.isdir(expanded_in):
+                        files = [
+                            f
+                            for f in os.listdir(expanded_in)
+                            if f.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+                        ]
+                        files = natsorted(files)
+                        if not files:
+                            self.app.call_from_thread(
+                                self.app.notify,
+                                f"No images found in {expanded_in}",
+                                severity="warning",
+                            )
+                            self.app.call_from_thread(self.safe_dismiss)
+                            return
+                        if len(files) > _MAX_PDF_PAGES:
+                            raise ValueError(
+                                f"Too many images for one PDF: {len(files)} > {_MAX_PDF_PAGES}. "
+                                "Split the folder and build one PDF per part."
+                            )
+                        images = []
+                        total_pixels = 0
+                        try:
+                            for f in files:
+                                if self._cancelled or (worker and worker.is_cancelled):
+                                    break
+                                with Image.open(os.path.join(expanded_in, f)) as opened_img:
+                                    pixels = opened_img.width * opened_img.height
+                                    if pixels > _MAX_IMAGE_PIXELS_LIMIT:
+                                        raise Image.DecompressionBombError(
+                                            f"{f}: {pixels:,} pixels exceeds the safety limit"
+                                        )
+                                    total_pixels += pixels
+                                    if total_pixels > _MAX_PDF_TOTAL_PIXELS:
+                                        raise Image.DecompressionBombError(
+                                            f"Folder exceeds the {_MAX_PDF_TOTAL_PIXELS:,}-pixel "
+                                            "total budget for one PDF"
+                                        )
+                                    images.append(opened_img.convert("RGB"))
+                            if not (self._cancelled or (worker and worker.is_cancelled)) and images:
+                                images[0].save(tmp_pdf, save_all=True, append_images=images[1:])
+                                os.replace(tmp_pdf, expanded_out)
+                                tmp_pdf = ""
+                                self.app.call_from_thread(
+                                    self.app.notify, "PDF Created!", severity="information"
+                                )
+                            elif self._cancelled or (worker and worker.is_cancelled):
+                                self.app.call_from_thread(
+                                    self.app.notify, "PDF Creation Cancelled", severity="warning"
+                                )
+                        finally:
+                            for img in images:
+                                try:
+                                    img.close()
+                                except Exception:
+                                    pass
+                    else:
+                        with Image.open(expanded_in) as img:
+                            pixels = img.width * img.height
+                            if pixels > _MAX_IMAGE_PIXELS_LIMIT:
+                                raise Image.DecompressionBombError(
+                                    f"{pixels:,} pixels exceeds the safety limit"
+                                )
+                            img.convert("RGB").save(tmp_pdf)
+                        os.replace(tmp_pdf, expanded_out)
+                        tmp_pdf = ""
                         self.app.call_from_thread(
-                            self.app.notify,
-                            f"No images found in {expanded_in}",
-                            severity="warning",
+                            self.app.notify, "PDF Created!", severity="information"
                         )
-                        self.app.call_from_thread(self.safe_dismiss)
-                        return
-                    first_path = os.path.join(expanded_in, files[0])
-                    with Image.open(first_path) as first_raw:
-                        if first_raw.width * first_raw.height > 50_000_000:
-                            raise Image.DecompressionBombError(
-                                f"Image '{files[0]}' exceeds 50 MP maximum safe threshold"
-                            )
-                        first_img = first_raw.convert("RGB")
-
-                    def _stream_images(img_files):
-                        for f in img_files:
-                            if self._cancelled or (worker and worker.is_cancelled):
-                                break
-                            p = os.path.join(expanded_in, f)
-                            with Image.open(p) as raw:
-                                if raw.width * raw.height > 50_000_000:
-                                    raise Image.DecompressionBombError(
-                                        f"Image '{f}' exceeds 50 MP maximum safe threshold"
-                                    )
-                                yield raw.convert("RGB")
-
-                    try:
-                        if len(files) == 1:
-                            first_img.save(expanded_out)
-                        else:
-                            first_img.save(
-                                expanded_out,
-                                save_all=True,
-                                append_images=_stream_images(files[1:]),
-                            )
-                        if not (self._cancelled or (worker and worker.is_cancelled)):
-                            self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
-                        else:
-                            self.app.call_from_thread(self.app.notify, "PDF Creation Cancelled", severity="warning")
-                    finally:
-                        first_img.close()
-                else:
-                    with Image.open(expanded_in) as img:
-                        img.convert("RGB").save(expanded_out)
-                    self.app.call_from_thread(self.app.notify, "PDF Created!", severity="information")
+                finally:
+                    if tmp_pdf:
+                        try:
+                            os.unlink(tmp_pdf)
+                        except OSError:
+                            pass
             except Exception as e:
                 self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
             self.app.call_from_thread(self.safe_dismiss)
@@ -940,6 +1045,10 @@ class PillowProgressScreen(_LoggingModalScreen):
 
                 try:
                     with Image.open(in_f) as img:
+                        if img.width * img.height > _MAX_IMAGE_PIXELS_LIMIT:
+                            raise Image.DecompressionBombError(
+                                f"{f}: {img.width * img.height:,} pixels exceeds the safety limit"
+                            )
                         img = self.process_image(img)
                         if out_f.lower().endswith((".jpg", ".jpeg")) and img.mode in ("RGBA", "P"):
                             img = img.convert("RGB")
@@ -1002,6 +1111,10 @@ class PillowProgressScreen(_LoggingModalScreen):
 
         try:
             with Image.open(expanded_in) as img:
+                if img.width * img.height > _MAX_IMAGE_PIXELS_LIMIT:
+                    raise Image.DecompressionBombError(
+                        f"{img.width * img.height:,} pixels exceeds the safety limit"
+                    )
                 img = self.process_image(img)
                 if expanded_out.lower().endswith((".jpg", ".jpeg")) and img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")

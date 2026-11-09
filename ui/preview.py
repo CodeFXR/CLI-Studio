@@ -13,7 +13,11 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, Static
 from textual.worker import get_current_worker
 
-from ui.progress import _kill_process_group, _register_process_group, _unregister_process_group
+from ui.progress import (
+    _register_process_group,
+    _unregister_process_group,
+    terminate_process,
+)
 from workflows.backends import ChafaBackend, get_backend
 
 
@@ -26,8 +30,6 @@ class PreviewModalScreen(ModalScreen):
         self.preview_type = preview_type
         self.process: subprocess.Popen | None = None
         self._cancel_event = threading.Event()
-        self._kill_dispatched = False
-        self._kill_lock = threading.Lock()
 
     @property
     def _cancelled(self) -> bool:
@@ -51,27 +53,20 @@ class PreviewModalScreen(ModalScreen):
         self.run_worker(self.run_preview, exclusive=True, thread=True)
 
     def action_close(self) -> None:
-        self._cancel_event.set()
+        self._cancelled = True
         proc = self.process
-        with self._kill_lock:
-            if not self._kill_dispatched:
-                self._kill_dispatched = True
-                if proc:
-                    threading.Thread(
-                        target=_kill_process_group,
-                        args=(proc,),
-                        daemon=True,
-                        name="preview-killer",
-                    ).start()
+        if proc and proc.poll() is None:
+            threading.Thread(
+                target=self._kill_process, args=(proc,), daemon=False, name="cli-studio-kill"
+            ).start()
         try:
             self.dismiss()
         except Exception:
             pass
 
-    def _kill_process(self) -> None:
-        proc = self.process
-        if proc:
-            _kill_process_group(proc)
+    def _kill_process(self, proc=None) -> None:
+        target = proc if proc is not None else self.process
+        terminate_process(target)
 
     def _run_cmd(self, cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         if self._cancelled:
@@ -90,15 +85,15 @@ class PreviewModalScreen(ModalScreen):
         _register_process_group(proc.pid)
         try:
             if self._cancelled:
-                _kill_process_group(proc)
+                self._kill_process(proc)
                 raise RuntimeError("Preview cancelled")
             stdout, stderr = proc.communicate(timeout=timeout)
             return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
         except subprocess.TimeoutExpired:
-            _kill_process_group(proc)
+            self._kill_process(proc)
             raise
         except Exception:
-            _kill_process_group(proc)
+            self._kill_process(proc)
             raise
         finally:
             if proc:

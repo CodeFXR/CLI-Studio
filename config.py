@@ -186,6 +186,7 @@ DEFAULT_CONFIG = {
     "default_theme": "t-default",
     "yt_dlp_cookies": "",
     "yt_dlp_remote_components": "",
+    "yt_dlp_allow_remote_js": False,
     "hw_accel": "",
     "ffmpeg_overwrite": True,
     "whisper_model": "small",
@@ -322,54 +323,130 @@ def validate_quality(v: str) -> str:
     return str(q)
 
 
-def validate_timestamp(v: str) -> str:
-    """Validate a media timestamp in pure seconds or HH:MM:SS / MM:SS format.
+def timestamp_to_seconds(v: str) -> float:
+    """Parse HH:MM:SS, MM:SS, or bare seconds to total seconds.
 
-    Enforces semantic boundaries:
-    - Pure seconds: 0 or positive float/int of arbitrary magnitude (e.g. "90", "3600").
-    - MM:SS: MM >= 0, 0 <= SS < 60.
-    - HH:MM:SS: HH >= 0, 0 <= MM < 60, 0 <= SS < 60.
+    Minutes/seconds in colon forms must be < 60; bare seconds may be any
+    non-negative length (e.g. "3600", "123:45" = 123m45s). Raises ValueError.
     """
     if not isinstance(v, str) or "\n" in v or "\r" in v:
         raise ValueError(f"Invalid timestamp '{v}'.")
     cleaned = v.strip()
     if not cleaned:
         raise ValueError("Timestamp cannot be empty.")
-
-    # Pure seconds form (e.g. "90", "3600", "7200.5")
-    if re.match(r"^[0-9]+(\.[0-9]+)?\Z", cleaned):
-        return cleaned
-
-    # Colon notation (MM:SS or HH:MM:SS)
     parts = cleaned.split(":")
-    if len(parts) == 2:
-        m_str, s_str = parts
-        if not (re.match(r"^[0-9]+\Z", m_str) and re.match(r"^[0-9]{1,2}(\.[0-9]+)?\Z", s_str)):
-            raise ValueError(
-                f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
-            )
-        if float(s_str) >= 60.0:
-            raise ValueError(f"Seconds value '{s_str}' in timestamp '{v}' must be less than 60.")
-        return cleaned
-    elif len(parts) == 3:
-        h_str, m_str, s_str = parts
-        if not (
-            re.match(r"^[0-9]+\Z", h_str)
-            and re.match(r"^[0-9]{1,2}\Z", m_str)
-            and re.match(r"^[0-9]{1,2}(\.[0-9]+)?\Z", s_str)
-        ):
-            raise ValueError(
-                f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
-            )
-        if int(m_str) >= 60:
-            raise ValueError(f"Minutes value '{m_str}' in timestamp '{v}' must be less than 60.")
-        if float(s_str) >= 60.0:
-            raise ValueError(f"Seconds value '{s_str}' in timestamp '{v}' must be less than 60.")
-        return cleaned
+    if len(parts) > 3:
+        raise ValueError(
+            f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+        )
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        raise ValueError(
+            f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
+        ) from None
+    if any(n < 0 for n in nums):
+        raise ValueError(f"Invalid timestamp '{v}'. Timestamps cannot be negative.")
+    if len(parts) == 3 and (nums[1] >= 60 or nums[2] >= 60):
+        raise ValueError(f"Invalid timestamp '{v}'. Minutes and seconds must be < 60.")
+    if len(parts) == 2 and nums[1] >= 60:
+        raise ValueError(f"Invalid timestamp '{v}'. Seconds must be < 60.")
+    weights = (3600, 60, 1)[3 - len(parts):]
+    return sum(n * w for n, w in zip(nums, weights, strict=False))
 
-    raise ValueError(
-        f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
-    )
+
+def validate_timestamp(v: str) -> str:
+    total = timestamp_to_seconds(v)
+    return f"{total:g}"
+
+
+_COOKIES_FROM_BROWSER_RE = re.compile(
+    r"^(chrome|chromium|firefox|brave|edge|safari|opera|vivaldi|whale)"
+    r"(\+[a-z0-9][a-z0-9_-]*)?"
+    r"(:[A-Za-z0-9][A-Za-z0-9._\- ]*)?"
+    r"(::[A-Za-z0-9][A-Za-z0-9._\-]*)?\Z",
+    re.IGNORECASE,
+)
+_REMOTE_COMPONENTS_ALLOWED = ("", "ejs:npm", "ejs:github")
+
+
+def validate_cookies_from_browser(v: str) -> str:
+    """Validate a yt-dlp --cookies-from-browser value (F-2).
+
+    Format: BROWSER[+KEYRING][:PROFILE][::CONTAINER].
+    """
+    if v is None:
+        return ""
+    if not isinstance(v, str):
+        raise ValueError("Cookies setting must be a string.")
+    cleaned = v.strip()
+    if not cleaned:
+        return ""
+    if not _COOKIES_FROM_BROWSER_RE.match(cleaned):
+        raise ValueError(
+            f"Invalid yt-dlp cookies value '{v}'. Use a browser name "
+            "(chrome, chromium, firefox, brave, edge, safari, opera, vivaldi, whale) "
+            "with an optional :profile or ::container suffix."
+        )
+    return cleaned
+
+
+def validate_remote_components(v: str) -> str:
+    """Syntactic allowlist for --remote-components values (F-2)."""
+    if v is None:
+        return ""
+    if not isinstance(v, str):
+        raise ValueError("Remote components setting must be a string.")
+    cleaned = v.strip()
+    if cleaned not in _REMOTE_COMPONENTS_ALLOWED:
+        raise ValueError(
+            f"Invalid yt-dlp remote components value '{v}'. Allowed: ejs:npm, ejs:github, or empty."
+        )
+    return cleaned
+
+
+def sanitize_yt_dlp_config(cfg: dict) -> tuple[str, str, list[str]]:
+    warnings: list[str] = []
+    try:
+        cookies = validate_cookies_from_browser(str(cfg.get("yt_dlp_cookies", "") or ""))
+    except ValueError:
+        cookies = ""
+        warnings.append(
+            "Saved yt-dlp cookies setting was invalid and has been ignored. Re-enter it in Settings."
+        )
+    try:
+        remote = validate_remote_components(str(cfg.get("yt_dlp_remote_components", "") or ""))
+    except ValueError:
+        remote = ""
+        warnings.append(
+            "Saved yt-dlp remote-components setting was invalid and has been ignored."
+        )
+    if remote == "ejs:github" and not coerce_bool(cfg.get("yt_dlp_allow_remote_js"), default=False):
+        remote = ""
+        warnings.append(
+            "yt-dlp remote components 'ejs:github' downloads and runs remote JavaScript "
+            "and was not enabled from the config file alone. Enter it in Settings to confirm."
+        )
+    elif remote == "ejs:github":
+        warnings.append(
+            "Remote JavaScript components (ejs:github) are ENABLED for downloads: "
+            "yt-dlp will download and execute remote JS solver code."
+        )
+    return cookies, remote, warnings
+
+
+def validate_remote_path(v: str) -> str:
+    """Validate the path part of an rclone remote spec (F-15)."""
+    if not isinstance(v, str):
+        raise ValueError("Remote path must be a string.")
+    cleaned = v.strip()
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        raise ValueError("Remote path cannot contain control characters.")
+    if cleaned.startswith("-"):
+        raise ValueError(f"Invalid remote path '{v}'. Paths cannot start with '-'.")
+    if ":" in cleaned:
+        raise ValueError(f"Invalid remote path '{v}'. Paths cannot contain ':'.")
+    return cleaned
 
 
 def validate_remote_name(v: str) -> str:

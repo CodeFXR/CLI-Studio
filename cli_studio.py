@@ -204,7 +204,7 @@ class CommandSuggester(Suggester):
 
 class CliStudioApp(App):
     TITLE = "CLI-Studio"
-    VERSION = "v1.3.3"
+    VERSION = "v1.4.0"
     CSS = LAYOUT_CSS + THEMES_CSS
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
@@ -683,7 +683,31 @@ class CliStudioApp(App):
                         self.notify(str(err), severity="error")
                         self.pending_setting = key
                         return
+            elif key == "yt_dlp_cookies":
+                try:
+                    value = app_config.validate_cookies_from_browser(value)
+                except ValueError as err:
+                    self.notify(str(err), severity="error")
+                    self.pending_setting = key
+                    return
+            elif key == "yt_dlp_remote_components":
+                try:
+                    value = app_config.validate_remote_components(value)
+                except ValueError as err:
+                    self.notify(str(err), severity="error")
+                    self.pending_setting = key
+                    return
             if self._save_setting(key, value):
+                if key == "yt_dlp_remote_components":
+                    # Typing ejs:github in Settings is the consent
+                    # action and the only in-app path that sets
+                    # yt_dlp_allow_remote_js. Honest limit: the flag
+                    # lives in the same config file, so this is an
+                    # opt-in record, not a hard boundary against a
+                    # writer who knows the schema. The compensating
+                    # control is that every download with remote JS
+                    # active shows a visible warning (sanitize_yt_dlp_config).
+                    self._save_setting("yt_dlp_allow_remote_js", value == "ejs:github")
                 self._refresh_settings_menu("Setting saved.")
             else:
                 self.pending_setting = key

@@ -41,6 +41,18 @@ fi
 
 # --- Variables ---
 REPO_URL="https://github.com/codefxr/cli-studio.git" # Update if your GitHub repo differs
+# Pin installs to a release ref (F-16). The previous behaviour cloned
+# and pulled `main` unpinned, so the curl|bash entry point executed
+# whatever happened to be on main that day. Override deliberately with
+# CLI_STUDIO_REF=main if you accept that risk.
+CLI_STUDIO_REF="${CLI_STUDIO_REF:-v1.4.0}"
+TEMP_DIR=""
+cleanup_temp() {
+    if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+trap cleanup_temp EXIT
 INSTALL_DIR="$HOME/.cli-studio"
 BIN_DIR="$HOME/.local/bin"
 EXECUTABLE="$BIN_DIR/cli-studio"
@@ -137,18 +149,17 @@ clone_repository() {
     fi
 
     if [ -d "$INSTALL_DIR/.git" ]; then
-        echo -e "  ${YELLOW}Updating repository in $INSTALL_DIR${RESET}"
-        (cd "$INSTALL_DIR" && git pull -q) || error_exit "Failed to update repository."
+        echo -e "  ${YELLOW}Updating repository in $INSTALL_DIR to $CLI_STUDIO_REF${RESET}"
+        (cd "$INSTALL_DIR" && git fetch -q --tags && git checkout -q "$CLI_STUDIO_REF") || error_exit "Failed to update repository to $CLI_STUDIO_REF."
     elif [ -d "$INSTALL_DIR" ]; then
-        # INSTALL_DIR exists (e.g. plugins or config), clone to temp and merge
-        local temp_dir
-        temp_dir="$(mktemp -d)"
-        git clone -q "$REPO_URL" "$temp_dir" || error_exit "Failed to clone repository. Is git installed?"
-        cp -r "$temp_dir"/. "$INSTALL_DIR"/
-        rm -rf "$temp_dir"
+        TEMP_DIR="$(mktemp -d)"
+        git clone -q --branch "$CLI_STUDIO_REF" --depth 1 "$REPO_URL" "$TEMP_DIR" || error_exit "Failed to clone repository. Is git installed?"
+        cp -r "$TEMP_DIR"/. "$INSTALL_DIR"/
+        rm -rf "$TEMP_DIR"
+        TEMP_DIR=""
     else
         mkdir -p "$INSTALL_DIR"
-        git clone -q "$REPO_URL" "$INSTALL_DIR" || error_exit "Failed to clone repository. Is git installed?"
+        git clone -q --branch "$CLI_STUDIO_REF" --depth 1 "$REPO_URL" "$INSTALL_DIR" || error_exit "Failed to clone repository. Is git installed?"
     fi
     success "Repository ready at $INSTALL_DIR"
 }
@@ -162,10 +173,14 @@ setup_venv() {
     source .venv/bin/activate
     echo -e "  ${YELLOW}Installing Python packages (textual, Pillow, yt-dlp)...${RESET}"
     pip install --upgrade pip -q
-    pip install --upgrade -q "${PYTHON_PACKAGES[@]}" || error_exit "Failed to install Python packages."
+    if [ -f "$INSTALL_DIR/requirements.txt" ]; then
+        pip install --upgrade -q -r "$INSTALL_DIR/requirements.txt" || error_exit "Failed to install Python packages."
+    else
+        pip install --upgrade -q "${PYTHON_PACKAGES[@]}" || error_exit "Failed to install Python packages."
+    fi
     echo
     echo -e "  ${BOLD}Installing optional Python packages (ffmpeg-normalize, gallery-dl)...${RESET}"
-    if pip install --quiet ffmpeg-normalize gallery-dl; then
+    if pip install --quiet "ffmpeg-normalize>=1.27,<2.0" "gallery-dl>=1.26,<2.0"; then
         success "Optional Python packages installed."
     else
         echo -e "  ${YELLOW}Warning:${RESET} Optional Python packages failed to install."
@@ -201,7 +216,9 @@ if [ "\$1" = "update" ]; then
     fi
 fi
 
-cd "\$INSTALL_DIR" && source .venv/bin/activate && python cli-studio.py "\$@"
+cd "\$INSTALL_DIR" || exit 1
+source .venv/bin/activate
+exec python cli-studio.py "\$@"
 EOF
 
     chmod +x "$EXECUTABLE"

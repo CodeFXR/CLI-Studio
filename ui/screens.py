@@ -57,7 +57,10 @@ class _BaseInputModal(ModalScreen):
             logger.exception("Wizard step %s raised: %s", self.prompt, exc)
             return
         if next_screen is None:
-            self.app.notify("Operation cancelled or path rejected.", severity="warning")
+            self.app.notify(
+                "Nothing to run for that selection (blocked, empty, or cancelled).",
+                severity="warning",
+            )
             self.dismiss()
             return
         self.dismiss()

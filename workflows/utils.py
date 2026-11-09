@@ -19,6 +19,79 @@ def abspath(p: str) -> str:
     return os.path.abspath(os.path.expanduser(p))
 
 
+def file_arg(path: str) -> str:
+    """Return `path` as a safe positional file argument for a CLI tool.
+
+    F-1: option termination cannot rest on callers remembering to
+    absolutize paths. Builders call this so the invariant lives in one
+    place: the returned path is absolute, therefore it can never be
+    parsed as an option by ffmpeg / ImageMagick / chafa / realesrgan,
+    none of which reliably honour "--" in every position (verified on
+    ffmpeg 8.1.2: `ffmpeg -i -- -file.mp4` FAILS with "Unrecognized
+    option"; `ffprobe ... -- -file.mp4` works, and the ffprobe call
+    sites below use both defences). Raises ValueError for empty paths
+    and for NUL/newline, which no wrapped tool accepts in a filename
+    argument anyway.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("File path cannot be empty.")
+    if "\x00" in path or "\n" in path or "\r" in path:
+        raise ValueError(f"File path contains illegal characters: {path!r}")
+    return os.path.abspath(os.path.expanduser(path))
+
+
+def escape_subtitles_filter_arg(sub_path: str) -> str:
+    """Build the ffmpeg `subtitles=` filter argument for a subtitle path.
+
+    F-3: this escaper used to live hand-rolled and untested in
+    workflows/video.py. It now lives here (stdlib-only, unit-testable
+    without Textual) with its behaviour pinned by tests in
+    tests/test_v14_fixes.py. The per-character table was verified
+    against real ffmpeg 8.1.2 filter parsing for 21 adversarial
+    filenames (spaces, colon, apostrophe, comma, brackets, semicolon,
+    '=', '"', backslash, colon+backslash mixes, trailing backslash,
+    percent, unicode) -- every one parsed and opened the correct
+    file, so the algorithm is KEPT, not replaced. (Newline in a path
+    also parsed under the old code; file_arg now rejects it up front,
+    which is the safer behaviour for a wizard-driven tool.) Do not
+    "simplify" it to a quote-wrapping scheme: the obvious single-quote
+    variant was also tested and fails on colon/apostrophe/backslash
+    paths (8/12 vectors). If ffmpeg's escaping rules change, the
+    ffmpeg-backed integration test in the test file is the canary.
+    """
+    expanded = file_arg(sub_path)
+    res = []
+    for ch in expanded:
+        if ch == "\\":
+            res.append("\\\\\\\\")
+        elif ch == "'":
+            res.append("\\\\\\'")
+        elif ch == ":":
+            res.append("\\\\:")
+        elif ch in (",", "[", "]", ";", " ", '"', "="):
+            res.append("\\" + ch)
+        else:
+            res.append(ch)
+    return f"subtitles=filename={''.join(res)}:si=0"
+
+
+def open_output_nofollow(path: str):
+    """Open a text output file for writing WITHOUT following a symlink.
+
+    F-10: the app's pattern was islink(path) -> ... -> open(path, "w"),
+    a check-then-write TOCTOU window, applied inconsistently. Opening
+    with O_NOFOLLOW makes the check atomic with the write: if the final
+    path component is a symlink (planted, dangling, or swapped in after
+    any earlier check), os.open raises OSError(ELOOP) instead of
+    clobbering the link target. Parent directory must already exist.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags, 0o644)
+    return os.fdopen(fd, "w", encoding="utf-8")
+
+
 def unique_path(directory: str, stem: str, ext: str) -> str:
     """Return a path inside `directory` whose stem does not collide with an existing file.
 
@@ -38,7 +111,7 @@ def unique_path(directory: str, stem: str, ext: str) -> str:
 
 
 def get_media_duration(filepath):
-    expanded = os.path.abspath(os.path.expanduser(filepath))
+    expanded = file_arg(filepath)
     if not os.path.isfile(expanded):
         raise FileNotFoundError(f"Input file not found: {expanded}")
 
@@ -50,6 +123,7 @@ def get_media_duration(filepath):
         "format=duration",
         "-of",
         "default=noprint_wrappers=1:nokey=1",
+        "--",
         expanded,
     ]
     try:
@@ -87,7 +161,8 @@ def probe_first_subtitle_codec(video_path: str) -> str:
         "stream=codec_name",
         "-of",
         "default=noprint_wrappers=1:nokey=1",
-        video_path,
+        "--",
+        file_arg(video_path),
     ]
     try:
         res = subprocess.run(

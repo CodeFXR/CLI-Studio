@@ -1,5 +1,6 @@
 import config
 from workflows.backends.base import Backend
+from workflows.utils import file_arg
 
 
 class ChafaBackend(Backend):
@@ -34,7 +35,7 @@ class ChafaBackend(Backend):
             f"{width}x{height}",
             "--format",
             output_format,
-            input_path,
+            file_arg(input_path),
         ]
 
     def build_cmd(
@@ -65,12 +66,12 @@ class ChafaBackend(Backend):
             self._ffmpeg_overwrite_flag(),
             "-nostdin",
             "-i",
-            input_path,
+            file_arg(input_path),
             "-filter_complex",
             f"showwaves=s={width}x{height}:mode=cline:colors=white",
             "-frames:v",
             "1",
-            output_path,
+            file_arg(output_path),
         ]
 
     def build_audiowaveform_command(
@@ -83,9 +84,9 @@ class ChafaBackend(Backend):
         return [
             "audiowaveform",
             "-i",
-            input_path,
+            file_arg(input_path),
             "-o",
-            output_path,
+            file_arg(output_path),
             "--pixels-per-second",
             str(pixels_per_second),
             "--zoom",

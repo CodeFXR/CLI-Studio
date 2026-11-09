@@ -53,20 +53,21 @@ def load_plugins(
     *,
     menus: MutableMapping[str, list[str]] | None = None,
     help_registry: MutableMapping[str, str] | None = None,
+    allow_explicit: bool = True,
 ) -> int:
-    if plugin_dir is None:
-        try:
-            import config
-            enabled = config.coerce_bool(
-                config._load_full_config().get("enable_plugins"), default=False
-            )
-        except Exception:
-            enabled = False
-        if not enabled:
-            logger.info(
-                "Plugin loading disabled by default for security; set enable_plugins=True in config to enable."
-            )
-            return 0
+    try:
+        import config
+
+        enabled = config.coerce_bool(
+            config._load_full_config().get("enable_plugins"), default=False
+        )
+    except Exception:
+        enabled = False
+    if not enabled and not (plugin_dir is not None and allow_explicit):
+        logger.info(
+            "Plugin loading disabled by default for security; set enable_plugins=True in config to enable."
+        )
+        return 0
 
     directory = (
         Path(plugin_dir).expanduser()

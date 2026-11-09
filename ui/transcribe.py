@@ -42,7 +42,6 @@ class WhisperProgressScreen(_LoggingModalScreen):
         self.device = device
         self.compute_type = compute_type
         self.cache_dir = cache_dir
-        self.cancel_requested = False
         self.progress_bar: ProgressBar | None = None
         self.status_label: Label | None = None
 
@@ -61,9 +60,21 @@ class WhisperProgressScreen(_LoggingModalScreen):
         self.run_worker(self.run_whisper, exclusive=True, thread=True)
 
     def action_cancel_process(self) -> None:
-        self.cancel_requested = True
-        self.safe_dismiss()
-        self.app.notify("Transcription cancelled", severity="warning")
+        if self._cancelled:
+            # Second Esc: the user insists on closing the screen. The
+            # worker may still be blocked inside native faster-whisper
+            # code; it owns its temp file and will discard the result.
+            self.safe_dismiss()
+            return
+        self._cancelled = True
+        self._set_status(
+            "Cancelling... stops after the current step (model load / segment). "
+            "Esc again to close this screen only."
+        )
+        self.app.notify(
+            "Cancellation requested - transcription will stop at the next checkpoint.",
+            severity="warning",
+        )
 
     def _set_status(self, message: str) -> None:
         if self.status_label:
@@ -119,7 +130,7 @@ class WhisperProgressScreen(_LoggingModalScreen):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
-        if self.cancel_requested or (worker and worker.is_cancelled):
+        if self._cancelled or (worker and worker.is_cancelled):
             self.app.call_from_thread(self.safe_dismiss)
             return
 
@@ -136,7 +147,8 @@ class WhisperProgressScreen(_LoggingModalScreen):
                 compute_type=self.compute_type,
                 cache_dir=self.cache_dir,
             )
-            if self.cancel_requested or (worker and worker.is_cancelled):
+            if self._cancelled or (worker and worker.is_cancelled):
+                self.app.call_from_thread(self._notify, "Transcription cancelled", "warning")
                 self.app.call_from_thread(self.safe_dismiss)
                 return
             language = None if self.language in ("", "auto") else self.language
@@ -164,7 +176,7 @@ class WhisperProgressScreen(_LoggingModalScreen):
                 if vtt:
                     handle.write("WEBVTT\n\n")
                 for segment in segments:
-                    if self.cancel_requested or (worker and worker.is_cancelled):
+                    if self._cancelled or (worker and worker.is_cancelled):
                         break
                     text = str(getattr(segment, "text", "")).strip()
                     if not text:
@@ -184,18 +196,27 @@ class WhisperProgressScreen(_LoggingModalScreen):
                             progress=min(end, duration),
                         )
 
-            if self.cancel_requested or (worker and worker.is_cancelled):
+            if self._cancelled or (worker and worker.is_cancelled):
                 os.unlink(temp_path)
                 temp_path = ""
                 self.app.call_from_thread(self._notify, "Transcription cancelled", "warning")
             else:
-                os.replace(temp_path, expanded_out)
-                temp_path = ""
-                self.app.call_from_thread(
-                    self._notify,
-                    f"Generated {count} subtitle segments.",
-                    "information",
-                )
+                if os.path.islink(expanded_out):
+                    os.unlink(temp_path)
+                    temp_path = ""
+                    self.app.call_from_thread(
+                        self._notify,
+                        f"Output cannot be a symbolic link: {escape(expanded_out)}",
+                        "error",
+                    )
+                else:
+                    os.replace(temp_path, expanded_out)
+                    temp_path = ""
+                    self.app.call_from_thread(
+                        self._notify,
+                        f"Generated {count} subtitle segments.",
+                        "information",
+                    )
         except ImportError:
             self.app.call_from_thread(
                 self._notify,

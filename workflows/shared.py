@@ -2,11 +2,11 @@ import os
 import re
 from typing import cast
 
-from config import _load_full_config, validate_timestamp
+from config import _load_full_config, sanitize_yt_dlp_config, validate_timestamp
 from ui.progress import DownloadProgressScreen, FfmpegProgressScreen, GenericCliProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.backends import GalleryDlBackend, get_backend
-from workflows.utils import abspath, get_media_duration
+from workflows.utils import abspath, file_arg, get_media_duration
 
 
 _ALLOWED_BROWSERS = {"brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"}
@@ -31,9 +31,7 @@ def _safe_remote_components(v: str) -> str:
 
 
 def build_download_flow(is_audio: bool, is_playlist: bool = False):
-    config = _load_full_config()
-    cookies = _safe_cookies(config.get("yt_dlp_cookies", ""))
-    remote_components = _safe_remote_components(config.get("yt_dlp_remote_components", ""))
+    cookies, remote_components, config_warnings = sanitize_yt_dlp_config(_load_full_config())
 
     def step2(url, state):
         state["url"] = url
@@ -48,6 +46,7 @@ def build_download_flow(is_audio: bool, is_playlist: bool = False):
             remote_components=remote_components,
             is_audio=is_audio,
             is_playlist=is_playlist,
+            config_warnings=tuple(config_warnings),
         )
 
     title = "Enter Playlist URL:" if is_playlist else "Enter URL:"
@@ -101,19 +100,10 @@ def build_trim_media_flow(is_video: bool):
 
     def step4(end, state):
         state["end"] = validate_timestamp(end)
-
-        def _to_sec(ts: str) -> float:
-            p = ts.split(":")
-            if len(p) == 1:
-                return float(p[0])
-            elif len(p) == 2:
-                return float(p[0]) * 60 + float(p[1])
-            elif len(p) == 3:
-                return float(p[0]) * 3600 + float(p[1]) * 60 + float(p[2])
-            return 0.0
-
-        if _to_sec(state["end"]) <= _to_sec(state["start"]):
-            raise ValueError("End time must be greater than start time.")
+        if float(state["end"]) <= float(state["start"]):
+            raise ValueError(
+                f"End time ({state['end']}s) must be after start time ({state['start']}s)."
+            )
 
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen("Save As (or batch dir):", f"{base}_trimmed{ext}", state, step5)
@@ -227,14 +217,14 @@ def file_file_in_out_flow(
         return progress_cls(expanded_in, expanded_out, args, target_ext=target_ext)
 
     def _step_second(second, state):
-        state["second_file"] = os.path.abspath(os.path.expanduser(second))
+        state["second_file"] = file_arg(second)
         base, ext = os.path.splitext(state["in_file"])
         return FilePickerScreen(
             save_prompt, f"{base}{save_suffix.format(ext=ext)}", state, _step_save
         )
 
     def _step_input(in_file, state):
-        state["in_file"] = os.path.abspath(os.path.expanduser(in_file))
+        state["in_file"] = file_arg(in_file)
         return FilePickerScreen(second_prompt, "", state, _step_second)
 
     return FilePickerScreen(input_prompt, "", {}, _step_input)
@@ -256,13 +246,13 @@ def file_file_progress_flow(
     """
 
     def _step_second(second, state):
-        state["second_file"] = os.path.abspath(os.path.expanduser(second))
+        state["second_file"] = file_arg(second)
         cmd = cmd_builder(state)
         target = state["second_file"]
         return GenericCliProgressScreen(cmd, tool_name, target)
 
     def _step_input(in_file, state):
-        state["in_file"] = os.path.abspath(os.path.expanduser(in_file))
+        state["in_file"] = file_arg(in_file)
         return FilePickerScreen(second_prompt, "", state, _step_second)
 
     return FilePickerScreen(input_prompt, "", {}, _step_input)
