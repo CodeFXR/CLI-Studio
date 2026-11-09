@@ -107,8 +107,8 @@ def build_ffmpeg_normalize_flow():
         return FilePickerScreen("Save Normalized Audio As:", f"{base}_norm{ext}", state, step3)
 
     def step3(out_file, state):
-        expanded_in = os.path.abspath(os.path.expanduser(state["in_file"]))
-        expanded_out = os.path.abspath(os.path.expanduser(out_file))
+        expanded_in = file_arg(state["in_file"])
+        expanded_out = file_arg(out_file)
         ext_lower = os.path.splitext(expanded_out)[1].lower()
         codec_map = {
             ".mp3": "libmp3lame",

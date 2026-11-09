@@ -5,7 +5,7 @@ import subprocess
 from natsort import natsorted
 from ui.screens import FilePickerScreen, OptionSelectScreen
 from ui.progress import GenericCliProgressScreen
-from workflows.utils import abspath, file_arg
+from workflows.utils import file_arg
 
 
 def _probe_subtitle_tracks(mkv_path: str) -> list[dict]:
@@ -147,7 +147,7 @@ def build_remux_to_mkv_flow():
         return FilePickerScreen("Save MKV As:", default_out, state, step3)
 
     def step3(out_file, state):
-        cmd = ["mkvmerge", "-o", abspath(out_file), abspath(state["in_file"])]
+        cmd = ["mkvmerge", "-o", file_arg(out_file), file_arg(state["in_file"])]
         return GenericCliProgressScreen(cmd, "mkvmerge", out_file)
 
     return FilePickerScreen("Select Video File:", "", {}, step2)
@@ -162,7 +162,7 @@ def build_merge_mkvs_flow():
 
     def step2(in_path, state):
         state["in_path"] = in_path
-        abs_in = abspath(in_path)
+        abs_in = file_arg(in_path)
         if os.path.isdir(abs_in):
             files = [f for f in os.listdir(abs_in) if f.lower().endswith((".mkv", ".mka", ".mks"))]
             files = natsorted(files)
@@ -178,15 +178,15 @@ def build_merge_mkvs_flow():
         files = state["files"]
         if not files:
             return None
-        expanded_out = abspath(out_file)
+        expanded_out = file_arg(out_file)
         if len(files) == 1:
-            cmd = ["mkvmerge", "-o", expanded_out, abspath(files[0])]
+            cmd = ["mkvmerge", "-o", expanded_out, file_arg(files[0])]
         else:
             cmd = ["mkvmerge", "-o", expanded_out]
             for i, f in enumerate(files):
                 if i:
                     cmd.append("+")
-                cmd.append(abspath(f))
+                cmd.append(file_arg(f))
         return GenericCliProgressScreen(cmd, "mkvmerge", expanded_out)
 
     return FilePickerScreen("Select Folder of MKVs (or single MKV):", "", {}, step2)
@@ -201,7 +201,7 @@ def build_extract_mkv_subs_flow():
 
     def step2(in_file, state):
         state["in_file"] = in_file
-        tracks = _probe_subtitle_tracks(abspath(in_file))
+        tracks = _probe_subtitle_tracks(file_arg(in_file))
         state["tracks"] = tracks
         return FilePickerScreen(
             "Save directory (subs named <base>_<lang-or-idx>.<ext>):",
@@ -214,9 +214,9 @@ def build_extract_mkv_subs_flow():
         tracks = state["tracks"]
         if not tracks:
             return None
-        in_abs = abspath(state["in_file"])
+        in_abs = file_arg(state["in_file"])
         base, _ = os.path.splitext(os.path.basename(state["in_file"]))
-        expanded_out_dir = abspath(out_dir)
+        expanded_out_dir = file_arg(out_dir)
         os.makedirs(expanded_out_dir, exist_ok=True)
         ext_map = {
             "subrip": "srt",
@@ -277,9 +277,9 @@ def build_add_subtitles_to_mkv_flow():
         return FilePickerScreen("Save MKV As:", f"{base}_with_subs.mkv", state, step5)
 
     def step5(out_file, state):
-        in_abs = abspath(state["in_file"])
-        sub_abs = abspath(state["sub_file"])
-        out_abs = abspath(out_file)
+        in_abs = file_arg(state["in_file"])
+        sub_abs = file_arg(state["sub_file"])
+        out_abs = file_arg(out_file)
         lang = state["lang"]
         if lang.startswith("und"):
             cmd = ["mkvmerge", "-o", out_abs, in_abs, sub_abs]
@@ -300,7 +300,7 @@ def build_extract_mkv_attachments_flow():
 
     def step2(in_file, state):
         state["in_file"] = in_file
-        attachments = _probe_attachments(abspath(in_file))
+        attachments = _probe_attachments(file_arg(in_file))
         state["attachments"] = attachments
         return FilePickerScreen(
             "Save directory (attachments named per their original filenames):",
@@ -314,7 +314,7 @@ def build_extract_mkv_attachments_flow():
         if not attachments:
             return None
         in_abs = file_arg(state["in_file"])
-        expanded_out_dir = abspath(out_dir)
+        expanded_out_dir = file_arg(out_dir)
         os.makedirs(expanded_out_dir, exist_ok=True)
         cmds = []
         used_names: set[str] = set()

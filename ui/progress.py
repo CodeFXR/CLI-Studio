@@ -1109,6 +1109,7 @@ class PillowProgressScreen(_LoggingModalScreen):
             except OSError:
                 pass
 
+        tmp_target = ""
         try:
             with Image.open(expanded_in) as img:
                 if img.width * img.height > _MAX_IMAGE_PIXELS_LIMIT:
@@ -1119,10 +1120,18 @@ class PillowProgressScreen(_LoggingModalScreen):
                 if expanded_out.lower().endswith((".jpg", ".jpeg")) and img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
 
+                out_ext = os.path.splitext(expanded_out)[1]
+                tmp_fd, tmp_target = tempfile.mkstemp(
+                    dir=out_dir or None, prefix=".cli-studio-img-", suffix=out_ext
+                )
+                os.close(tmp_fd)
+
                 if self.action == "compress":
-                    img.save(expanded_out, optimize=True, quality=int(self.dimensions))
+                    img.save(tmp_target, optimize=True, quality=int(self.dimensions))
                 else:
-                    img.save(expanded_out)
+                    img.save(tmp_target)
+            os.replace(tmp_target, expanded_out)
+            tmp_target = ""
             self.app.call_from_thread(
                 self.app.notify, "Image Processing Complete!", severity="information"
             )
@@ -1132,5 +1141,11 @@ class PillowProgressScreen(_LoggingModalScreen):
             )
         except Exception as e:
             self.app.call_from_thread(self.app.notify, f"Error: {escape(str(e))}", severity="error")
+        finally:
+            if tmp_target:
+                try:
+                    os.unlink(tmp_target)
+                except OSError:
+                    pass
 
         self.app.call_from_thread(self.safe_dismiss)
