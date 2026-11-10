@@ -68,7 +68,10 @@ if [ -d "$INSTALL_DIR/.git" ]; then
     else
         LATEST_TAG=$(git -C "$INSTALL_DIR" tag -l 'v*' --sort=-v:refname | head -n1)
         if [ -n "$LATEST_TAG" ]; then
-            git -C "$INSTALL_DIR" checkout -q "$LATEST_TAG"
+            if ! git -C "$INSTALL_DIR" checkout -q "$LATEST_TAG"; then
+                echo -e "  ${RED}${BOLD}Error:${RESET} Could not check out $LATEST_TAG (local edits?). Resolve it in $INSTALL_DIR and re-run update; Python packages were NOT upgraded." >&2
+                exit 1
+            fi
         fi
     fi
     echo -e "  ${GREEN}Application code updated to $(git -C "$INSTALL_DIR" describe --tags --always).${RESET}"

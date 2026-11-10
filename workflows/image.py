@@ -14,7 +14,7 @@ from ui.progress import GenericCliProgressScreen, PillowProgressScreen
 from ui.screens import FilePickerScreen, OptionSelectScreen, TextInputScreen
 from workflows.backends import ImageMagickBackend, get_backend
 from workflows.shared import file_file_progress_flow
-from workflows.utils import IMAGE_EXTENSIONS as _BATCH_IMAGE_EXTS
+from workflows.utils import IMAGE_EXTENSIONS as _BATCH_IMAGE_EXTS, file_arg
 
 _DENIED_EXIF_HOMEDIRS = (
     ".ssh",
@@ -323,8 +323,8 @@ def build_extract_text_flow():
         )
 
     def step4(out_file, state):
-        expanded_in = os.path.abspath(os.path.expanduser(state["in_file"]))
-        out_base, _ = os.path.splitext(os.path.abspath(os.path.expanduser(out_file)))
+        expanded_in = file_arg(state["in_file"])
+        out_base, _ = os.path.splitext(file_arg(out_file))
         cmd = ["tesseract", expanded_in, out_base, "-l", state["lang"]]
         return GenericCliProgressScreen(cmd, "tesseract", out_base)
 
@@ -451,7 +451,7 @@ def build_rename_by_exif_date_flow():
                     f"{expanded_out}/",
                     "-d",
                     "%Y-%m-%d_%H%M%S",
-                    "-FileName<DateTimeOriginal",
+                    "-FileName<DateTimeOriginal%%-c.%%e",
                     "--",
                     in_f,
                 ]
@@ -503,10 +503,10 @@ def build_scan_barcode_flow():
                 and os.path.isfile(os.path.join(in_path, f))
             ]
             cmds = [
-                ["zbarimg", "--quiet", "--raw", os.path.join(in_path, f)] for f in natsorted(files)
+                ["zbarimg", "--quiet", "--raw", file_arg(os.path.join(in_path, f))] for f in natsorted(files)
             ]
         else:
-            cmds = [["zbarimg", "--quiet", "--raw", in_path]]
+            cmds = [["zbarimg", "--quiet", "--raw", file_arg(in_path)]]
         if not cmds:
             return None
         return GenericCliProgressScreen(cmds, "zbarimg", expanded_out, out_file=expanded_out)

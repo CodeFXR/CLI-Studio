@@ -255,17 +255,33 @@ def test_video_audio_secondary_inputs_use_file_arg():
     assert safe.endswith("/-subtle_flag.png")
 
 
-def test_handbrake_argv_uses_file_arg():
-    from workflows import handbrake
+def test_handbrake_argv_uses_file_arg(tmp_path):
+    from workflows.handbrake import build_handbrake_preset_flow
 
-    flow = handbrake.build_handbrake_preset_flow()
-    assert flow is not None
+    flow = build_handbrake_preset_flow()
+    s2 = flow.next_step_func(str(tmp_path / "-input.mp4"), {})
+    s3 = s2.next_step_func("Fast 1080p30", s2.state)
+    screen = s3.next_step_func(str(tmp_path / "out.mp4"), s3.state)
+    cmd = screen.cmds[0] if isinstance(screen.cmds[0], list) else screen.cmds
+    assert cmd[0] == "HandBrakeCLI"
+    assert cmd[cmd.index("-i") + 1].startswith("/")
+    assert cmd[cmd.index("-i") + 1].endswith("/-input.mp4")
+    assert not cmd[cmd.index("-i") + 1].startswith("-")
+    assert cmd[cmd.index("-o") + 1].startswith("/")
+    assert not cmd[cmd.index("-o") + 1].startswith("-")
 
-    # Verify HandBrakeCLI preset step uses file_arg
-    state = {"in_file": "-input.mp4", "preset": "Fast 1080p30"}
-    # In step 4: expanded_in = file_arg(state["in_file"])
-    assert file_arg(state["in_file"]).endswith("/-input.mp4")
-    assert os.path.isabs(file_arg(state["in_file"]))
+
+def test_validate_timestamp_rejects_nan_and_inf():
+    from config import validate_timestamp
+
+    with assert_raises(ValueError):
+        validate_timestamp("nan")
+
+    with assert_raises(ValueError):
+        validate_timestamp("inf")
+
+    with assert_raises(ValueError):
+        validate_timestamp("-inf")
 
 
 # ---------------------------------------------------------------- F-10 Symlink O_NOFOLLOW

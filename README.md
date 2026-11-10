@@ -157,7 +157,7 @@ Open settings using `Alt+S` or `/settings`. All options persist in `~/.cli-studi
 - **Path Sanitization:** User paths are expanded and canonicalized with symlink clobber protection.
 - **Process Escalation:** Subprocesses cleanly terminate via `SIGTERM` with an automated `SIGKILL` escalation fallback.
 - **Input Validation:** Numeric ranges, dimensions, and timestamps are strictly validated against bounds before execution.
-- **Test Suite:** 167 automated unit, regression, and integration tests passing (`pytest`).
+- **Test Suite:** 168 automated unit, regression, and integration tests passing (`pytest`).
 - **Code Quality:** Strict type-checked (`mypy`) and linted (`ruff`) with zero warnings.
 
 ---

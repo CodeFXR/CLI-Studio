@@ -1058,7 +1058,7 @@ def test_build_rename_by_exif_date_flow_one_cmd_per_image(tmp_path):
     assert len(result.cmds) == 2
     cmd0 = result.cmds[0]
     assert cmd0[0] == "exiftool"
-    assert "-FileName<DateTimeOriginal" in cmd0
+    assert any(arg.startswith("-FileName<DateTimeOriginal") for arg in cmd0)
     assert "01.jpg" in " ".join(cmd0)
 
 

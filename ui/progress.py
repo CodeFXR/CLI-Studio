@@ -74,6 +74,13 @@ def terminate_process(proc: subprocess.Popen[Any] | None, grace: float = _TERM_G
     with lock:
         try:
             if proc.poll() is not None:
+                pgid = _verified_pgid(proc)
+                if pgid is not None:
+                    try:
+                        os.killpg(pgid, 0)
+                        _signal_group_or_process(proc, pgid, signal.SIGKILL)
+                    except OSError:
+                        pass
                 _unregister_process_group(getattr(proc, "pid", None))
                 return False
             pgid = _verified_pgid(proc)
@@ -237,7 +244,7 @@ class _LoggingModalScreen(ModalScreen[Any]):
                 pass
 
     def _request_kill(self, proc: subprocess.Popen[Any] | None) -> None:
-        if not proc or proc.poll() is not None:
+        if not proc:
             return
         threading.Thread(
             target=terminate_process, args=(proc,), daemon=False, name="cli-studio-kill"
@@ -319,7 +326,7 @@ class DownloadProgressScreen(_LoggingModalScreen):
         worker = get_current_worker()
         bar = self.progress_bar
 
-        expanded_path = os.path.abspath(os.path.expanduser(self.save_path))
+        expanded_path = file_arg(self.save_path)
         if os.path.islink(expanded_path):
             self.app.call_from_thread(
                 self.app.notify,

@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import tempfile
@@ -345,8 +346,8 @@ def timestamp_to_seconds(v: str) -> float:
         raise ValueError(
             f"Invalid timestamp '{v}'. Use HH:MM:SS, MM:SS, or seconds (e.g. 00:01:30 or 90)."
         ) from None
-    if any(n < 0 for n in nums):
-        raise ValueError(f"Invalid timestamp '{v}'. Timestamps cannot be negative.")
+    if any(not math.isfinite(n) or n < 0 for n in nums):
+        raise ValueError(f"Invalid timestamp '{v}'. Timestamps must be finite non-negative numbers.")
     if len(parts) == 3 and (nums[1] >= 60 or nums[2] >= 60):
         raise ValueError(f"Invalid timestamp '{v}'. Minutes and seconds must be < 60.")
     if len(parts) == 2 and nums[1] >= 60:
