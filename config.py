@@ -353,12 +353,21 @@ def timestamp_to_seconds(v: str) -> float:
     if len(parts) == 2 and nums[1] >= 60:
         raise ValueError(f"Invalid timestamp '{v}'. Seconds must be < 60.")
     weights = (3600, 60, 1)[3 - len(parts):]
-    return sum(n * w for n, w in zip(nums, weights, strict=False))
+    total = sum(n * w for n, w in zip(nums, weights, strict=False))
+    if not math.isfinite(total):
+        raise ValueError(
+            f"Invalid timestamp '{v}'. Total duration exceeds maximum representable number."
+        )
+    return total
 
 
 def validate_timestamp(v: str) -> str:
     total = timestamp_to_seconds(v)
-    return f"{total:g}"
+    if total == 0:
+        return "0"
+    if total.is_integer():
+        return str(int(total))
+    return f"{total:.9f}".rstrip("0").rstrip(".")
 
 
 _COOKIES_FROM_BROWSER_RE = re.compile(

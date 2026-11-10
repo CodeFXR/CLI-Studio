@@ -283,6 +283,43 @@ def test_validate_timestamp_rejects_nan_and_inf():
     with assert_raises(ValueError):
         validate_timestamp("-inf")
 
+    with assert_raises(ValueError):
+        validate_timestamp("1e308:00:00")
+
+
+def test_validate_timestamp_subsecond_precision():
+    from config import validate_timestamp
+
+    assert validate_timestamp("00:59:59.999") == "3599.999"
+    assert validate_timestamp("00:00:01.234567") == "1.234567"
+    assert validate_timestamp("90") == "90"
+    assert validate_timestamp("-0") == "0"
+
+
+def test_mkv_probe_attachments_rejects_float_and_bool_ids(monkeypatch):
+    import subprocess
+    from workflows import mkv
+
+    payload = json.dumps(
+        {
+            "attachments": [
+                {"id": True, "filename": "skip_bool.png"},
+                {"id": 2.7, "filename": "skip_float.png"},
+                {"id": 5, "filename": "keep_int.png", "size": 100},
+            ]
+        }
+    )
+
+    class MockRun:
+        returncode = 0
+        stdout = payload
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: MockRun())
+    atts = mkv._probe_attachments("/tmp/fake.mkv")
+    assert len(atts) == 1
+    assert atts[0]["id"] == 5
+    assert atts[0]["filename"] == "keep_int.png"
+
 
 # ---------------------------------------------------------------- F-10 Symlink O_NOFOLLOW
 def test_open_output_nofollow_rejects_symlink():

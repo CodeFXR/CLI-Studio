@@ -73,17 +73,23 @@ def terminate_process(proc: subprocess.Popen[Any] | None, grace: float = _TERM_G
     lock = _kill_lock_for(proc)
     with lock:
         try:
+            pid = getattr(proc, "pid", None)
+            with _PG_LOCK:
+                is_registered = bool(pid and pid in _ACTIVE_PROCESS_GROUPS)
+            pgid = _verified_pgid(proc)
+            if pgid is None and is_registered and pid and pid > 0:
+                pgid = pid
+
             if proc.poll() is not None:
-                pgid = _verified_pgid(proc)
                 if pgid is not None:
                     try:
                         os.killpg(pgid, 0)
                         _signal_group_or_process(proc, pgid, signal.SIGKILL)
                     except OSError:
                         pass
-                _unregister_process_group(getattr(proc, "pid", None))
+                _unregister_process_group(pid)
                 return False
-            pgid = _verified_pgid(proc)
+
             _signal_group_or_process(proc, pgid, signal.SIGTERM)
             try:
                 proc.wait(timeout=grace)
@@ -108,7 +114,7 @@ def terminate_process(proc: subprocess.Popen[Any] | None, grace: float = _TERM_G
                 except OSError:
                     pass
 
-            _unregister_process_group(getattr(proc, "pid", None))
+            _unregister_process_group(pid)
             return True
         finally:
             with _KILL_LOCKS_GUARD:

@@ -77,7 +77,7 @@ def _probe_attachments(mkv_path: str) -> list[dict]:
         out = []
         for att in raw_atts:
             id_val = att.get("id")
-            if id_val is None:
+            if id_val is None or isinstance(id_val, (bool, float)):
                 continue
             try:
                 int_id = int(id_val)
